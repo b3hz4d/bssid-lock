@@ -1,0 +1,168 @@
+# Builds both apps from the tagged source on GitHub's runners, signs them when signing secrets are
+# configured (see docs/SIGNING.md), and publishes a GitHub Release with SHA-256 checksums and
+# build-provenance attestations so anyone can verify the files came from this repository.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build the release for (e.g. v1.1.0)
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  macos:
+    name: macOS app
+    runs-on: macos-15
+    env:
+      HAS_DEVELOPER_ID: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Import Developer ID certificate
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Build
+        env:
+          SIGN_IDENTITY: ${{ env.HAS_DEVELOPER_ID == 'true' && 'Developer ID Application' || '' }}
+        run: ./macos/build.sh
+
+      - name: Notarize
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: ./macos/notarize.sh
+
+      - name: Zip (not notarized)
+        if: env.HAS_DEVELOPER_ID != 'true'
+        run: cd macos/build && ditto -c -k --keepParent BSSIDLock.app BSSIDLock-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: macos/build/BSSIDLock-macOS.zip
+
+  windows:
+    name: Windows app
+    runs-on: windows-latest
+    env:
+      HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: ./windows/build.ps1
+
+      - name: Upload unsigned build
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: windows/out/BSSIDLock.exe
+
+      # Free code signing for open-source projects: https://signpath.org (see docs/SIGNING.md)
+      - name: Sign with SignPath
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'bssid-lock' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: windows/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: windows/out/BSSIDLock.exe
+
+  publish:
+    name: Publish release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum BSSIDLock-macOS.zip BSSIDLock.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/BSSIDLock-macOS.zip
+            dist/BSSIDLock.exe
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          ## Download
+
+          | Platform | File | Requirements |
+          | --- | --- | --- |
+          | macOS | **BSSIDLock-macOS.zip** | macOS 13 or later, Apple silicon or Intel |
+          | Windows | **BSSIDLock.exe** | Windows 10 (1903+) or 11, nothing to install |
+
+          First-run steps and permissions: see the [README](https://github.com/${GITHUB_REPOSITORY}#readme).
+
+          ## Verify your download
+
+          Built from tag \`${TAG}\` by GitHub Actions ([workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})).
+
+          \`\`\`
+          gh attestation verify BSSIDLock.exe -R ${GITHUB_REPOSITORY}
+          \`\`\`
+
+          SHA-256:
+          \`\`\`
+          $(cat dist/SHA256SUMS.txt)
+          \`\`\`
+          EOF
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "BSSIDLock $TAG" --notes-file notes.md --target "$GITHUB_SHA"

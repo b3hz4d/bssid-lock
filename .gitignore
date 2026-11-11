@@ -13,8 +13,11 @@ build/
 xcuserdata/
 DerivedData/
 
-# Windows (future)
+# Windows
 bin/
 obj/
 *.user
 .vs/
+
+# Windows build output
+windows/out/
