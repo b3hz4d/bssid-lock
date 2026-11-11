@@ -41,6 +41,8 @@ namespace BSSIDLock
         public bool IsLocked { get; private set; }
         public bool Busy { get; private set; }
         public bool AccessDenied { get; private set; }
+        /// <summary>The last Wi-Fi error other than "access denied", shown in the window until a call succeeds.</summary>
+        public string LastError { get; private set; }
         public List<string> Log { get; } = new List<string>();
 
         DateTime retryAfter = DateTime.MinValue;
@@ -163,13 +165,26 @@ namespace BSSIDLock
             try
             {
                 Current = await Task.Run(() => Wlan.GetCurrentConnection());
-                AccessDenied = false;
+                // Only a real answer proves we have access; "not connected" doesn't touch the protected API.
+                if (Current != null) { AccessDenied = false; LastError = null; }
             }
             catch (WlanException ex)
             {
                 Current = null;
-                if (ex.AccessDenied) AccessDenied = true; else AddLog(ex.Message);
+                NoteError(ex);
             }
+        }
+
+        void NoteError(WlanException ex)
+        {
+            if (ex.AccessDenied)
+            {
+                if (!AccessDenied) AddLog(ex.Message);
+                AccessDenied = true;
+                return;
+            }
+            if (LastError != ex.Message) AddLog(ex.Message);   // log each new problem once, not every few seconds
+            LastError = ex.Message;
         }
 
         void ApplyScan(List<BssEntry> all)
@@ -197,14 +212,14 @@ namespace BSSIDLock
             {
                 var all = await Task.Run(() => Wlan.GetAccessPoints(scanFirst: true));
                 AccessDenied = false;
+                LastError = null;
                 ApplyScan(all);
                 if (Settings.Ssid.Length > 0)
                     AddLog("Scan: found " + Visible.Count + " access point(s) for \"" + Settings.Ssid + "\"");
             }
             catch (WlanException ex)
             {
-                if (ex.AccessDenied) AccessDenied = true;
-                AddLog(ex.Message);
+                NoteError(ex);
             }
             finally
             {
@@ -292,6 +307,7 @@ namespace BSSIDLock
             IsLocked = false;
             if (!Settings.LockEnabled) Set(LockState.Off, "Lock is off", "Windows picks the access point. " + ConnectionDetail);
             else if (AccessDenied) Set(LockState.Attention, "Location access needed", "Windows hides Wi-Fi details from apps without it.");
+            else if (LastError != null && Current == null) Set(LockState.Attention, "Wi-Fi problem", LastError);
             else if (Settings.Ssid.Length == 0) Set(LockState.Attention, "Choose a network", "Open Settings to pick the Wi-Fi network to manage.");
             else if (Current == null) Set(LockState.Idle, "Not connected to Wi-Fi", "Waiting for \"" + Settings.Ssid + "\".");
             else if (Current.Ssid != Settings.Ssid) Set(LockState.Idle, "Idle on \"" + Current.Ssid + "\"", "BSSIDLock only acts on \"" + Settings.Ssid + "\".");

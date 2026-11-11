@@ -334,6 +334,8 @@ namespace BSSIDLock
                 if (engine.AccessDenied)
                     ShowBanner("Windows is hiding Wi-Fi details. Turn on Location services and \"Let desktop apps access your location\".",
                         "Open location settings", () => Process.Start("ms-settings:privacy-location"));
+                else if (engine.LastError != null && engine.Current == null)
+                    ShowBanner("Wi-Fi problem: " + engine.LastError, "Show activity", () => new ActivityForm(engine).ShowDialog(this));
                 else if (st.Ssid.Length == 0)
                     ShowBanner("Choose which Wi-Fi network BSSIDLock should manage.", "Choose network…", OpenSettings);
                 else
@@ -472,7 +474,7 @@ namespace BSSIDLock
             foreach (var b in candidates)
             {
                 var ap = engine.Find(b);
-                var item = new ToolStripMenuItem(engine.Label(b) + (ap != null ? "   " + Signal.Quality(ap.Rssi) : "   (out of range)"))
+                var item = new ToolStripMenuItem(engine.Label(b) + (ap != null ? "   " + Signal.Quality(ap.Rssi) + " (" + ap.Rssi + " dBm)" : "   (out of range)"))
                 { Checked = st.Target == b };
                 string bssid = b;
                 item.Click += (s, e) => engine.LockTo(bssid);

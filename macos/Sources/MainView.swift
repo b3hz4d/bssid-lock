@@ -16,6 +16,8 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 520)
+        // Dock icon while the window is open; AppDelegate removes it again when the window closes.
+        .onAppear { NSApp.setActivationPolicy(.regular) }
         .sheet(isPresented: $ui.showSettings) {
             SettingsSheet().environmentObject(e).environmentObject(ui)
         }

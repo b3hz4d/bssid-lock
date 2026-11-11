@@ -2,8 +2,27 @@
 // https://github.com/b3hz4d/bssid-lock
 import SwiftUI
 
+/// Closing the main window leaves BSSIDLock running in the menu bar only, with no Dock icon.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            guard let closing = note.object as? NSWindow, Self.isDocumentWindow(closing) else { return }
+            DispatchQueue.main.async {
+                let stillOpen = NSApp.windows.contains { $0 !== closing && $0.isVisible && Self.isDocumentWindow($0) }
+                if !stillOpen { NSApp.setActivationPolicy(.accessory) }
+            }
+        }
+    }
+
+    /// A normal titled window (not the menu bar popover, which is a panel).
+    private static func isDocumentWindow(_ w: NSWindow) -> Bool {
+        w.styleMask.contains(.titled) && !(w is NSPanel) && w.sheetParent == nil
+    }
+}
+
 @main
 struct BSSIDLockApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var engine = Engine()
     @StateObject private var ui = UIState()
 
@@ -75,7 +94,7 @@ struct MenuBarView: View {
                 .disabled(e.favorites.isEmpty)
                 ForEach(quickItems) { item in
                     ChoiceRow(title: e.label(for: item.bssid),
-                              subtitle: item.ap.map { "\($0.band) · \(SignalQuality(rssi: $0.rssi).label)" } ?? "Out of range",
+                              subtitle: item.ap.map { "\($0.band) · \(SignalQuality(rssi: $0.rssi).label) (\($0.rssi) dBm)" } ?? "Out of range",
                               rssi: item.ap?.rssi, showBars: true,
                               selected: e.lockEnabled && e.target == item.bssid) {
                         e.lockTo(item.bssid)
@@ -104,6 +123,7 @@ struct MenuBarView: View {
     private var quickItems: [APItem] { Array((e.favoriteItems + e.otherItems).prefix(8)) }
 
     private func show() {
+        NSApp.setActivationPolicy(.regular)   // bring the Dock icon back while the window is open
         openWindow(id: "main")
         bringToFront()
     }

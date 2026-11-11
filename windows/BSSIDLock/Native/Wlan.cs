@@ -14,7 +14,7 @@ namespace BSSIDLock.Native
         public const int ErrorAccessDenied = 5;
 
         public int Code { get; }
-        public bool AccessDenied => Code == ErrorAccessDenied;
+        public bool AccessDenied => Code == ErrorAccessDenied || Code == unchecked((int)0x80070005);
 
         public WlanException(string operation, int code) : base(Describe(operation, code)) { Code = code; }
         public WlanException(string message) : base(message) { Code = -1; }
@@ -284,8 +284,12 @@ namespace BSSIDLock.Native
             {
                 if (WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out IntPtr handle) != 0) return false;
                 callback = OnNotification;
-                if (WlanRegisterNotification(handle, NotificationSourceAcm | NotificationSourceMsm, true, callback,
-                        IntPtr.Zero, IntPtr.Zero, out _) != 0)
+                int rc = WlanRegisterNotification(handle, NotificationSourceAcm | NotificationSourceMsm, true, callback,
+                    IntPtr.Zero, IntPtr.Zero, out _);
+                // Windows 11 24H2+ denies roaming (MSM) events without location consent; connect/disconnect (ACM) events still work.
+                if (rc == WlanException.ErrorAccessDenied)
+                    rc = WlanRegisterNotification(handle, NotificationSourceAcm, true, callback, IntPtr.Zero, IntPtr.Zero, out _);
+                if (rc != 0)
                 {
                     WlanCloseHandle(handle, IntPtr.Zero);
                     return false;

@@ -93,6 +93,12 @@ namespace BSSIDLock
             ssidRow.Controls.Add(ssid);
             ssidRow.Controls.Add(useCurrent);
             grid.Controls.Add(ssidRow);
+            string why =
+                engine.AccessDenied ? "Windows is hiding Wi-Fi details until you allow location access, so the list is empty. You can still type the name."
+                : engine.Current == null ? "You're not connected to Wi-Fi right now, so \"Use current network\" is unavailable. You can type the name."
+                : engine.Nearby.Count == 0 ? "No scan results yet. Pick from the list after a scan, or type the name."
+                : null;
+            if (why != null) grid.Controls.Add(Hint(why));
             grid.Controls.Add(Hint("BSSIDLock only acts while you're connected to this network. Windows must already know the network (connect to it once normally)."));
 
             grid.Controls.Add(Heading("Behavior"));
