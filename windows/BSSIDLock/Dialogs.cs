@@ -68,9 +68,13 @@ namespace BSSIDLock
         {
             base.OnHandleCreated(e);
             Theme.Apply(this);
-            themeHandler = (s, a) => { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => Theme.Apply(this))); };
+            OnThemeApplied();
+            themeHandler = (s, a) => { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => { Theme.Apply(this); OnThemeApplied(); })); };
             Theme.Changed += themeHandler;
         }
+
+        /// <summary>Called after the theme is applied (first show and every theme change).</summary>
+        protected virtual void OnThemeApplied() { }
 
         protected override void OnHandleDestroyed(EventArgs e)
         {
@@ -90,12 +94,15 @@ namespace BSSIDLock
     {
         readonly Engine engine;
         readonly Updater updater;
+        readonly Panel host;
+        readonly StackPanel stack;
+        readonly Panel footer;
         readonly FieldBox ssid, manual;
         readonly DropDownButton nearby, interval;
         readonly ToggleSwitch startup, notify, autoUpdate;
         readonly SegmentedControl appearance;
-        readonly Label updateStatus;
-        readonly UiButton checkNow;
+        readonly SettingRow versionRow;
+        readonly UiButton checkNow, save, cancel;
 
         static readonly string[] ThemeKeys = { "system", "light", "dark" };
 
@@ -104,22 +111,23 @@ namespace BSSIDLock
             this.engine = engine;
             this.updater = updater;
             var st = engine.Settings;
+            AutoScaleMode = AutoScaleMode.None;   // everything here is sized from the font, which already follows display scaling
             FormBorderStyle = FormBorderStyle.Sizable;
-            ClientSize = new Size(660, 660);
-            MinimumSize = new Size(560, 420);
+            StartPosition = FormStartPosition.Manual;
 
-            var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(22, 16, 22, 8) };
-            var stack = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Margin = new Padding(0) };
-            stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            scroll.Controls.Add(stack);
+            host = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            stack = new StackPanel { Location = Point.Empty };
+            stack.SuspendLayout();
+            host.Controls.Add(stack);
+            host.Layout += (s, e) => { int w = host.ClientSize.Width; if (stack.Width != w) stack.Width = w; };
 
             // ---- Network
-            ssid = new FieldBox { Width = 230, Margin = new Padding(0, 0, 8, 0), Placeholder = "Network name" };
+            ssid = new FieldBox { DesignWidth = 220, Placeholder = "Network name" };
             ssid.Text = st.Ssid;
-            nearby = new DropDownButton { Placeholder = "Choose", Margin = new Padding(0), EmptyText = "No networks found yet" };
+            nearby = new DropDownButton { Placeholder = "Choose", EmptyText = "No networks found yet" };
             nearby.SetOptions(engine.Nearby.Select(n => new KeyValuePair<string, object>(n.Ssid, n.Ssid)));
             nearby.SelectedValue = null;
-            nearby.SelectionChanged += (s, e) => { ssid.Text = nearby.SelectedValue as string ?? ssid.Text; nearby.SelectedValue = null; };
+            nearby.SelectionChanged += (s, e) => { if (nearby.SelectedValue is string picked) ssid.Text = picked; nearby.SelectedValue = null; };
             nearby.ExtraItems = () =>
             {
                 if (engine.Current == null) return Enumerable.Empty<ToolStripItem>();
@@ -129,14 +137,14 @@ namespace BSSIDLock
                 return new ToolStripItem[] { item };
             };
             string why =
-                engine.AccessDenied ? " Windows is hiding Wi-Fi details until you allow location access, so nearby networks can't be listed; you can still type the name."
+                engine.AccessDenied ? " Windows is hiding nearby networks until you allow location access; you can still type the name."
                 : engine.Current == null ? " You're not connected to Wi-Fi right now; you can type the name."
                 : "";
-            AddSection(stack, "Network",
-                Row("Wi-Fi network", "BSSIDLock only acts while you're connected to this network. Windows must already know it (connect once normally)." + why,
-                    Flow(ssid, nearby)));
+            Section("Network",
+                new SettingRow("Wi-Fi network", "BSSIDLock only acts while you're connected to this network. Windows must already know it (connect once normally)." + why,
+                    new HStack(ssid, nearby)));
 
-            // ---- Lock behavior
+            // ---- Behavior
             interval = new DropDownButton { MinWidth = 170 };
             var seconds = new List<int> { 5, 10, 15, 30, 60 };
             if (!seconds.Contains(st.IntervalSeconds)) seconds.Add(st.IntervalSeconds);
@@ -150,65 +158,114 @@ namespace BSSIDLock
             };
             startup = Toggle(StartWithWindows.IsEnabled);
             notify = Toggle(st.NotifyChanges);
-            AddSection(stack, "Behavior",
-                Row("Safety check", "Wi-Fi changes are handled instantly. This extra check is only a backup.", interval),
-                Row("Start with Windows", "Runs quietly in the notification area after you sign in.", startup),
-                Row("Notifications", "Tell me when the Wi-Fi network or access point changes.", notify));
+            Section("Behavior",
+                new SettingRow("Safety check", "Wi-Fi changes are handled instantly. This extra check is only a backup.", interval),
+                new SettingRow("Start with Windows", "Runs quietly in the notification area after you sign in.", startup),
+                new SettingRow("Notifications", "Tell me when the Wi-Fi network or access point changes.", notify));
 
             // ---- Appearance
             appearance = new SegmentedControl { Options = new[] { "System", "Light", "Dark" } };
             appearance.SelectedIndex = Math.Max(0, Array.IndexOf(ThemeKeys, st.Theme));
             appearance.SelectedIndexChanged += (s, e) => Theme.SetPreference(ThemeKeys[appearance.SelectedIndex]);   // live preview
-            AddSection(stack, "Appearance",
-                Row("Theme", "“System” follows your Windows light or dark setting.", appearance));
+            Section("Appearance",
+                new SettingRow("Theme", "“System” follows your Windows light or dark setting.", appearance));
 
             // ---- Updates
             autoUpdate = Toggle(st.AutoUpdate);
-            checkNow = new UiButton { Text = "Check now", Margin = new Padding(0) };
+            checkNow = new UiButton { Text = "Check now" };
             checkNow.Click += async (s, e) => await updater.CheckAsync(userInitiated: true);
-            var versionRow = Row("Version " + Updater.Current, "", checkNow);
-            updateStatus = (Label)versionRow.Tag;
-            AddSection(stack, "Updates",
-                Row("Automatic updates", "Checks this project's GitHub releases once a day and installs new versions in the background. Every download is checked against the release checksum.", autoUpdate),
+            versionRow = new SettingRow("Version " + Updater.Current, "", checkNow);
+            Section("Updates",
+                new SettingRow("Automatic updates", "Checks this project's GitHub releases once a day and installs new versions in the background. Every download is checked against the release checksum.", autoUpdate),
                 versionRow);
 
             // ---- Favorites by address
-            manual = new FieldBox { Width = 200, Margin = new Padding(0, 0, 8, 0), Placeholder = "aa:bb:cc:dd:ee:ff" };
+            manual = new FieldBox { DesignWidth = 190, Placeholder = "aa:bb:cc:dd:ee:ff" };
             manual.Box.Font = new Font("Consolas", 10F);
             manual.Box.MaxLength = 17;
+            var add = new UiButton { Text = "Add", Enabled = false, MinWidth = 70 };
             manual.Box.KeyPress += (s, e) =>
             {
-                // Only hex digits and separators; Enter adds.
+                // Only hex digits and separators.
                 if (e.KeyChar == '\r') { e.Handled = true; return; }
                 if (!char.IsControl(e.KeyChar) && !Uri.IsHexDigit(e.KeyChar) && e.KeyChar != ':' && e.KeyChar != '-') e.Handled = true;
             };
-            var add = new UiButton { Text = "Add", Margin = new Padding(0), Enabled = false };
-            add.Click += (s, e) =>
-            {
-                if (engine.AddFavorite(manual.Text)) { manual.Text = ""; add.Text = "Added"; }
-                else MessageBox.Show(this, "That doesn't look like an access point address (for example aa:bb:cc:dd:ee:ff).", "BSSIDLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            };
             manual.Box.TextChanged += (s, e) => { add.Text = "Add"; add.Enabled = Bssid.IsValid(manual.Text); };
             manual.Box.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter && add.Enabled) { add.PerformClick(); e.SuppressKeyPress = true; } };
-            AddSection(stack, "Favorites",
-                Row("Add by address", "For an access point that's out of range right now.", Flow(manual, add)));
+            add.Click += (s, e) =>
+            {
+                if (!engine.AddFavorite(manual.Text)) return;
+                manual.Text = "";
+                add.Text = "Added";
+            };
+            Section("Favorites",
+                new SettingRow("Add by address", "For an access point that's out of range right now.", new HStack(manual, add)));
+
+            stack.ResumeLayout(false);
 
             // ---- Footer
-            var save = new UiButton { Text = "Save", Style = UiButton.Kind.Primary, DialogResult = DialogResult.OK };
-            var cancel = new UiButton { Text = "Cancel", DialogResult = DialogResult.Cancel };
+            save = new UiButton { Text = "Save", Style = UiButton.Kind.Primary, DialogResult = DialogResult.OK, MinWidth = 100 };
+            cancel = new UiButton { Text = "Cancel", DialogResult = DialogResult.Cancel, MinWidth = 100 };
             AcceptButton = save;
             CancelButton = cancel;
-            var footer = Buttons(cancel, save);
-            footer.Dock = DockStyle.Bottom;
-            footer.Padding = new Padding(22, 12, 22, 16);
+            footer = new Panel { Dock = DockStyle.Bottom };
+            footer.Controls.Add(save);
+            footer.Controls.Add(cancel);
+            footer.Layout += (s, e) =>
+            {
+                var bs = save.GetPreferredSize(Size.Empty);
+                var cs = cancel.GetPreferredSize(Size.Empty);
+                int pad = Ui.S(this, 22), gap = Ui.S(this, 10), top = Ui.S(this, 12);
+                footer.Height = top + Math.Max(bs.Height, cs.Height) + Ui.S(this, 16);
+                save.SetBounds(footer.Width - pad - bs.Width, top, bs.Width, bs.Height);
+                cancel.SetBounds(save.Left - gap - cs.Width, top, cs.Width, cs.Height);
+            };
 
-            Controls.Add(scroll);
+            Controls.Add(host);
             Controls.Add(footer);
-            scroll.BringToFront();
+            host.BringToFront();
+            ClientSize = new Size(Ui.S(this, 680), Ui.S(this, 600));
+            MinimumSize = new Size(Ui.S(this, 560), Ui.S(this, 380));
 
             updater.Changed += OnUpdaterChanged;
             OnUpdaterChanged(null, EventArgs.Empty);
             Finish();
+        }
+
+        void Section(string title, params SettingRow[] rows)
+        {
+            stack.Controls.Add(new SectionHeading(title) { Margin = new Padding(0, 10, 0, 8) });
+            var card = new SettingsCard { Margin = new Padding(0, 0, 0, 10) };
+            card.Controls.AddRange(rows);
+            stack.Controls.Add(card);
+        }
+
+        static ToggleSwitch Toggle(bool value)
+        {
+            var t = new ToggleSwitch { Checked = value };
+            t.Text = value ? "On" : "Off";
+            t.CheckedChanged += (s, e) => t.Text = t.Checked ? "On" : "Off";
+            return t;
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            // Fit the window to its content (no scrolling unless the screen is too small), centered on the main window.
+            var area = Screen.FromControl(Owner ?? this).WorkingArea;
+            int chrome = Height - ClientSize.Height;
+            int content = stack.GetPreferredSize(new Size(ClientSize.Width, 0)).Height + footer.Height;
+            ClientSize = new Size(ClientSize.Width, Math.Min(content, area.Height - chrome - Ui.S(this, 40)));
+            var anchor = Owner != null && Owner.Visible ? Owner.Bounds : area;
+            Location = new Point(
+                Math.Max(area.Left, anchor.Left + (anchor.Width - Width) / 2),
+                Math.Max(area.Top + Ui.S(this, 10), anchor.Top + (anchor.Height - Height) / 2));
+        }
+
+        protected override void OnThemeApplied()
+        {
+            Theme.NativeTheme(host, "DarkMode_Explorer");   // dark scrollbar
+            host.Invalidate(true);
         }
 
         void AskCustomInterval()
@@ -227,74 +284,11 @@ namespace BSSIDLock
             interval.SelectedValue = sec;
         }
 
-        protected override void OnLoad(EventArgs e)
-        {
-            base.OnLoad(e);
-            var area = Screen.FromControl(Owner ?? this).WorkingArea;
-            if (Height > area.Height - 40) { Height = area.Height - 40; Top = Math.Max(area.Top + 20, Top); }
-        }
-
-        // ---------------------------------------------------------------- building blocks
-
-        static ToggleSwitch Toggle(bool value)
-        {
-            var t = new ToggleSwitch { Checked = value, Margin = new Padding(0) };
-            t.Text = value ? "On" : "Off";
-            t.CheckedChanged += (s, e) => t.Text = t.Checked ? "On" : "Off";
-            return t;
-        }
-
-        static FlowLayoutPanel Flow(params Control[] controls)
-        {
-            var f = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-            f.Controls.AddRange(controls);
-            return f;
-        }
-
-        /// <summary>A settings row: title and description on the left, the control on the right. Tag = the description label.</summary>
-        static TableLayoutPanel Row(string title, string description, Control control)
-        {
-            var row = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Padding = new Padding(16, 12, 16, 12), Margin = new Padding(0) };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            var text = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 16, 0) };
-            var t = new Label { Text = title, AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
-            var d = new Label { Text = description, AutoSize = true, Tag = "subtle", Margin = new Padding(0), Visible = description.Length > 0 };
-            text.Controls.Add(t, 0, 0);
-            text.Controls.Add(d, 0, 1);
-            control.Anchor = AnchorStyles.Right;
-            row.Controls.Add(text, 0, 0);
-            row.Controls.Add(control, 1, 0);
-            row.SizeChanged += (s, e) =>
-            {
-                int w = Math.Max(120, row.ClientSize.Width - row.Padding.Horizontal - control.Width - 24);
-                t.MaximumSize = d.MaximumSize = new Size(w, 0);
-            };
-            row.Tag = d;
-            return row;
-        }
-
-        static void AddSection(TableLayoutPanel stack, string heading, params Control[] rows)
-        {
-            stack.Controls.Add(new Label { Text = heading, AutoSize = true, Font = new Font("Segoe UI Semibold", 10.5F), Margin = new Padding(2, 6, 0, 8) });
-            var card = new Card { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 16), Padding = new Padding(1) };
-            var inner = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Margin = new Padding(0) };
-            inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            for (int i = 0; i < rows.Length; i++)
-            {
-                if (i > 0) inner.Controls.Add(new Panel { Height = 1, Dock = DockStyle.Fill, Margin = new Padding(16, 0, 16, 0), Tag = "separator" });
-                inner.Controls.Add(rows[i]);
-            }
-            card.Controls.Add(inner);
-            stack.Controls.Add(card);
-        }
-
         void OnUpdaterChanged(object sender, EventArgs e)
         {
             if (IsDisposed) return;
             checkNow.Enabled = !updater.Busy;
-            updateStatus.Text = updater.Status.Length > 0 ? updater.Status : "Press “Check now” to look for a new version.";
-            updateStatus.Visible = true;
+            versionRow.Description = updater.Status.Length > 0 ? updater.Status : "Press “Check now” to look for a new version.";
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)

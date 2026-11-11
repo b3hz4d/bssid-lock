@@ -165,6 +165,9 @@ namespace BSSIDLock
                 case Card card:
                     card.BackColor = Surface;
                     break;
+                case SettingsCard settingsCard:
+                    settingsCard.BackColor = Surface;
+                    break;
                 case LinkLabel link:
                     link.LinkColor = link.ActiveLinkColor = link.VisitedLinkColor = Accent;
                     break;

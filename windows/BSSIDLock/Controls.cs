@@ -420,12 +420,16 @@ namespace BSSIDLock
 
         protected override void OnClick(EventArgs e) { Box.Focus(); base.OnClick(e); }
 
+        /// <summary>Width in design pixels (scaled with the font).</summary>
+        public int DesignWidth { get; set; } = 220;
+
+        public override Size GetPreferredSize(Size proposedSize) =>
+            new Size(Ui.S(this, DesignWidth), Box.PreferredHeight + Ui.S(this, 14));
+
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
             int h = Box.PreferredHeight;
-            int target = h + Ui.S(this, 14);
-            if (Height != target) Height = target;
             int px = Ui.S(this, 10);
             Box.SetBounds(px, (Height - h) / 2, Math.Max(10, Width - px * 2), h);
         }
@@ -439,6 +443,216 @@ namespace BSSIDLock
             var r = new RectangleF(0, 0, Width, Height);
             Ui.FillRound(g, r, radius, Theme.Field);
             Ui.DrawRound(g, r, radius, focused ? Theme.Accent : Theme.Border, focused ? Math.Max(1.5f, Ui.Unit(this) * 1.5f) : 1f);
+        }
+    }
+
+    // ---------------------------------------------------------------- simple, predictable layout for settings
+    // (WinForms' nested auto-sizing tables with wrapping text are slow and mis-measure at high scaling.)
+
+    /// <summary>Stacks children top to bottom at full width; each child's height comes from its preferred size.</summary>
+    sealed class StackPanel : Panel
+    {
+        public int PadX = 22, PadTop = 14, PadBottom = 10;   // design pixels
+
+        public StackPanel()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        }
+
+        int Measure(int width, bool apply)
+        {
+            int x = Ui.S(this, PadX), w = Math.Max(10, width - x * 2), y = Ui.S(this, PadTop);
+            foreach (Control c in Controls)
+            {
+                if (!c.Visible) continue;
+                y += Ui.S(this, c.Margin.Top);
+                int h = c.GetPreferredSize(new Size(w, 0)).Height;
+                if (apply) c.SetBounds(x, y, w, h);
+                y += h + Ui.S(this, c.Margin.Bottom);
+            }
+            return y + Ui.S(this, PadBottom);
+        }
+
+        public override Size GetPreferredSize(Size proposedSize) =>
+            new Size(proposedSize.Width, Measure(proposedSize.Width > 0 ? proposedSize.Width : Width, false));
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            int total = Measure(Width, true);
+            if (Height != total) Height = total;
+        }
+    }
+
+    /// <summary>Rounded card holding settings rows, with thin separators between them.</summary>
+    sealed class SettingsCard : Panel
+    {
+        public SettingsCard()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            int w = proposedSize.Width > 0 ? proposedSize.Width : Width, y = 2;
+            foreach (Control c in Controls) if (c.Visible) y += c.GetPreferredSize(new Size(w - 2, 0)).Height + 1;
+            return new Size(w, y + 1);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            int y = 1;
+            foreach (Control c in Controls)
+            {
+                if (!c.Visible) continue;
+                int h = c.GetPreferredSize(new Size(Width - 2, 0)).Height;
+                c.SetBounds(1, y, Width - 2, h);
+                y += h + 1;
+            }
+            Invalidate();
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Ui.Back(this));
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float radius = Ui.S(this, 8);
+            var r = new RectangleF(0, 0, Width, Height);
+            Ui.FillRound(g, r, radius, Theme.Surface);
+            Ui.DrawRound(g, r, radius, Theme.Border);
+            g.SmoothingMode = SmoothingMode.None;
+            var visible = Controls.Cast<Control>().Where(c => c.Visible).ToList();
+            using (var pen = new Pen(Theme.Border))
+                for (int i = 0; i < visible.Count - 1; i++)
+                {
+                    int y = visible[i].Bottom;
+                    g.DrawLine(pen, Ui.S(this, 18), y, Width - Ui.S(this, 18), y);
+                }
+        }
+    }
+
+    /// <summary>One setting: title and description on the left (wrapping), its control on the right.</summary>
+    sealed class SettingRow : Control
+    {
+        string description;
+        public Control Editor { get; }
+
+        const TextFormatFlags WrapFlags = TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.Left | TextFormatFlags.Top;
+
+        public SettingRow(string title, string description, Control editor)
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Text = title;
+            this.description = description ?? "";
+            Editor = editor;
+            Controls.Add(editor);
+        }
+
+        public string Description
+        {
+            get => description;
+            set { description = value ?? ""; Parent?.Parent?.PerformLayout(); Parent?.PerformLayout(); Invalidate(); }
+        }
+
+        int PadX => Ui.S(this, 18);
+        int PadY => Ui.S(this, 14);
+        Size EditorSize => Editor.GetPreferredSize(Size.Empty);
+        int TextWidth(int width) => Math.Max(Ui.S(this, 140), width - PadX * 2 - EditorSize.Width - Ui.S(this, 24));
+
+        int DescHeight(int width) =>
+            description.Length == 0 ? 0 : TextRenderer.MeasureText(description, Font, new Size(TextWidth(width), int.MaxValue), WrapFlags).Height;
+
+        int TextHeight(int width)
+        {
+            int d = DescHeight(width);
+            return Font.Height + (d > 0 ? Ui.S(this, 3) + d : 0);
+        }
+
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            int w = proposedSize.Width > 0 ? proposedSize.Width : Width;
+            return new Size(w, Math.Max(TextHeight(w), EditorSize.Height) + PadY * 2);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            var es = EditorSize;
+            Editor.SetBounds(Width - PadX - es.Width, (Height - es.Height) / 2, es.Width, es.Height);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Ui.Back(this));
+            int tw = TextWidth(Width), dh = DescHeight(Width);
+            int y = (Height - TextHeight(Width)) / 2;
+            TextRenderer.DrawText(g, Text, Font, new Rectangle(PadX, y, tw, Font.Height), Theme.Text, Ui.Left);
+            if (dh > 0)
+                TextRenderer.DrawText(g, description, Font, new Rectangle(PadX, y + Font.Height + Ui.S(this, 3), tw, dh), Theme.Subtle, WrapFlags);
+        }
+
+        // Clicking the text of a switch row flips the switch.
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            if (Editor is ToggleSwitch t) t.Checked = !t.Checked;
+        }
+    }
+
+    /// <summary>Places a few controls side by side (e.g. a text field and a button).</summary>
+    sealed class HStack : Panel
+    {
+        public HStack(params Control[] items)
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            foreach (var c in items) { c.Margin = Padding.Empty; Controls.Add(c); }
+        }
+
+        int Gap => Ui.S(this, 8);
+
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            int w = 0, h = 0, n = 0;
+            foreach (Control c in Controls) { if (!c.Visible) continue; var s = c.GetPreferredSize(Size.Empty); w += s.Width; h = Math.Max(h, s.Height); n++; }
+            return new Size(w + Gap * Math.Max(0, n - 1), h);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            int x = 0;
+            foreach (Control c in Controls)
+            {
+                if (!c.Visible) continue;
+                var s = c.GetPreferredSize(Size.Empty);
+                c.SetBounds(x, (Height - s.Height) / 2, s.Width, s.Height);
+                x += s.Width + Gap;
+            }
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(Ui.Back(this));
+    }
+
+    /// <summary>A section title above a card.</summary>
+    sealed class SectionHeading : Control
+    {
+        public SectionHeading(string text)
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Text = text;
+        }
+
+        protected override void OnParentChanged(EventArgs e)
+        {
+            base.OnParentChanged(e);
+            if (Parent != null && Font.Name != "Segoe UI Semibold") Font = new Font("Segoe UI Semibold", Parent.Font.Size + 1f);
+        }
+
+        public override Size GetPreferredSize(Size proposedSize) => new Size(proposedSize.Width, Font.Height + Ui.S(this, 2));
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Ui.Back(this));
+            TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(Ui.S(this, 2), 0, Width, Height), Theme.Text, Ui.Left);
         }
     }
 
