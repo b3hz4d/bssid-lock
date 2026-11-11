@@ -16,7 +16,7 @@ namespace BSSIDLock
         readonly Updater updater;
         readonly TrayUi tray;
         readonly Timer timer, eventDebounce, updateTimer;
-        string listSignature;
+        string listSignature, emptyKey;
         bool startHidden;
         bool exiting;
         bool updating;
@@ -24,21 +24,19 @@ namespace BSSIDLock
         // Header
         StatusBadge badge;
         Label title, detail;
-        CheckBox lockToggle;
-        ComboBox lockTo;
-        // Banner (location / Wi-Fi problem / choose network)
-        Panel banner;
-        Label bannerText;
-        Button bannerButton;
-        Action bannerAction;
-        // List and actions
+        ToggleSwitch lockSwitch;
+        // Toolbar
+        Label lockToLabel;
+        DropDownButton lockTo;
+        UiButton scanButton;
+        // Content
         Panel listHost;
         AccessPointList list;
+        EmptyState empty;
         ContextMenuStrip listMenu;
-        Button btnRename, btnUp, btnDown, btnScan;
         // Footer
-        StatusStrip status;
-        ToolStripStatusLabel footer, updateLink;
+        Label footer;
+        LinkLabel updateLink;
 
         public MainForm(Engine engine, bool startHidden, bool justUpdated)
         {
@@ -48,12 +46,12 @@ namespace BSSIDLock
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            Font = new Font("Segoe UI", 9F);
+            Font = new Font("Segoe UI", 9.5F);
             Text = "BSSIDLock";
             Icon = AppIcon.Load(small: false);
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(820, 580);
-            MinimumSize = new Size(680, 480);
+            ClientSize = new Size(840, 600);
+            MinimumSize = new Size(700, 480);
 
             BuildLayout();
             ResumeLayout(false);
@@ -123,127 +121,85 @@ namespace BSSIDLock
 
         void BuildLayout()
         {
-            var root = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 4,
-                Padding = new Padding(16, 14, 16, 10),
-            };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // banner
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(22, 18, 22, 12) };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // header
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // list
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // buttons
-
-            root.Controls.Add(BuildBanner(), 0, 0);
-            root.Controls.Add(BuildHeader(), 0, 1);
-            root.Controls.Add(BuildList(), 0, 2);
-            root.Controls.Add(BuildButtons(), 0, 3);
-
-            status = new StatusStrip { SizingGrip = true, Padding = new Padding(8, 0, 4, 0) };
-            footer = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-            updateLink = new ToolStripStatusLabel { IsLink = true, Visible = false, Margin = new Padding(0, 3, 12, 2) };
-            updateLink.Click += async (s, e) => await updater.CheckAsync(userInitiated: true);
-            var activity = new ToolStripStatusLabel("Activity") { IsLink = true, Margin = new Padding(0, 3, 12, 2) };
-            activity.Click += (s, e) => { using (var f = new ActivityForm(engine)) f.ShowDialog(this); };
-            var settings = new ToolStripStatusLabel("Settings") { IsLink = true };
-            settings.Click += (s, e) => OpenSettings();
-            status.Items.AddRange(new ToolStripItem[] { footer, updateLink, activity, settings });
-
-            Controls.Add(status);
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // toolbar
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // list / message
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // footer
+            root.Controls.Add(BuildHeader(), 0, 0);
+            root.Controls.Add(BuildToolbar(), 0, 1);
+            root.Controls.Add(BuildContent(), 0, 2);
+            root.Controls.Add(BuildFooter(), 0, 3);
             Controls.Add(root);
-            root.BringToFront();
-        }
-
-        Control BuildBanner()
-        {
-            banner = new Panel
-            {
-                Dock = DockStyle.Fill,
-                Padding = new Padding(12, 8, 8, 8),
-                Margin = new Padding(0, 0, 0, 12),
-                AutoSize = true,
-                Visible = false,
-                Tag = "banner",
-            };
-            var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            bannerText = new Label { AutoSize = true, Anchor = AnchorStyles.Left, Tag = "banner", Margin = new Padding(0, 0, 12, 0) };
-            bannerButton = new Button { AutoSize = true, Anchor = AnchorStyles.Right, Padding = new Padding(6, 0, 6, 0) };
-            bannerButton.Click += (s, e) => bannerAction?.Invoke();
-            row.Controls.Add(bannerText, 0, 0);
-            row.Controls.Add(bannerButton, 1, 0);
-            row.SizeChanged += (s, e) => bannerText.MaximumSize = new Size(Math.Max(100, row.Width - bannerButton.Width - 24), 0);
-            banner.Controls.Add(row);
-            return banner;
         }
 
         Control BuildHeader()
         {
-            var header = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 3,
-                AutoSize = true,
-                Margin = new Padding(0, 0, 0, 12),
-            };
+            var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true, Margin = new Padding(0) };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            badge = new StatusBadge { Size = new Size(52, 52), Margin = new Padding(0, 0, 14, 0), Anchor = AnchorStyles.Left };
+            badge = new StatusBadge { Size = new Size(54, 54), Margin = new Padding(0, 0, 16, 0), Anchor = AnchorStyles.Left };
 
-            var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, AutoSize = true };
-            title = new Label { AutoSize = true, Font = new Font("Segoe UI Semibold", 14F), Margin = new Padding(0, 4, 0, 2) };
-            detail = new Label { AutoSize = true, Tag = "subtle", Margin = new Padding(1, 0, 0, 0) };
+            var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, AutoSize = true, Margin = new Padding(0) };
+            title = new Label { AutoSize = true, Font = new Font("Segoe UI Semibold", 15F), Margin = new Padding(0, 4, 0, 2) };
+            detail = new Label { AutoSize = true, Tag = "subtle", Margin = new Padding(2, 0, 0, 0) };
             text.Controls.Add(title, 0, 0);
             text.Controls.Add(detail, 0, 1);
             text.SizeChanged += (s, e) => { title.MaximumSize = detail.MaximumSize = new Size(Math.Max(100, text.Width), 0); };
 
-            var right = new TableLayoutPanel { ColumnCount = 2, RowCount = 2, AutoSize = true, Anchor = AnchorStyles.Right };
-            lockToggle = new CheckBox
-            {
-                Appearance = Appearance.Button,
-                FlatStyle = FlatStyle.Flat,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Size = new Size(150, 34),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI Semibold", 9.5F),
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 0, 0, 8),
-                Anchor = AnchorStyles.Right,
-                Tag = "theme:skip",
-            };
-            lockToggle.FlatAppearance.BorderSize = 0;
-            lockToggle.CheckedChanged += (s, e) => { if (!updating) engine.SetLockEnabled(lockToggle.Checked); };
-
-            var lockToLabel = new Label { Text = "Lock to:", AutoSize = true, Anchor = AnchorStyles.Right, Margin = new Padding(0, 6, 6, 0) };
-            lockTo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240 };
-            lockTo.SelectedIndexChanged += (s, e) =>
-            {
-                if (updating) return;
-                engine.SetTarget((lockTo.SelectedItem as Choice)?.Bssid);
-            };
-            right.Controls.Add(lockToggle, 1, 0);
-            right.Controls.Add(lockToLabel, 0, 1);
-            right.Controls.Add(lockTo, 1, 1);
+            lockSwitch = new ToggleSwitch { Text = "Lock", Font = new Font("Segoe UI Semibold", 11F), Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
+            lockSwitch.CheckedChanged += (s, e) => { if (!updating) engine.SetLockEnabled(lockSwitch.Checked); };
+            new ToolTip().SetToolTip(lockSwitch, "When on, BSSIDLock keeps you on the access point(s) you chose");
 
             header.Controls.Add(badge, 0, 0);
             header.Controls.Add(text, 1, 0);
-            header.Controls.Add(right, 2, 0);
+            header.Controls.Add(lockSwitch, 2, 0);
             return header;
         }
 
-        Control BuildList()
+        Control BuildToolbar()
         {
-            // A 1px border around the list, drawn by the host panel's background.
-            listHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(1), Margin = new Padding(0), Tag = "theme:skip" };
+            var bar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 16, 0, 12) };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            var left = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Left };
+            lockToLabel = new Label { Text = "Lock to", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
+            lockTo = new DropDownButton { MinWidth = 240, Margin = new Padding(0), EmptyText = "Star access points to add them here" };
+            lockTo.SelectionChanged += (s, e) => engine.SetTarget(lockTo.SelectedValue as string);
+            left.Controls.Add(lockToLabel);
+            left.Controls.Add(lockTo);
+            left.Layout += (s, e) => lockToLabel.Margin = new Padding(0, (lockTo.Height - lockToLabel.Height) / 2, 8, 0);
+
+            var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Right };
+            scanButton = new UiButton { Glyph = Ui.GlyphRefresh, Text = "Scan" };
+            scanButton.Click += async (s, e) => await engine.ScanAsync();
+            var activity = new UiButton { Glyph = Ui.GlyphHistory, Text = "Activity" };
+            activity.Click += (s, e) => ShowActivity();
+            var settings = new UiButton { Glyph = Ui.GlyphSettings, Text = "Settings", Margin = new Padding(0) };
+            settings.Click += (s, e) => OpenSettings();
+            right.Controls.AddRange(new Control[] { scanButton, activity, settings });
+
+            bar.Controls.Add(left, 0, 0);
+            bar.Controls.Add(right, 1, 0);
+            return bar;
+        }
+
+        Control BuildContent()
+        {
+            var host = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+
+            // A 1 px border around the list, drawn by the host panel's background.
+            listHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(1), Tag = "theme:skip" };
             list = new AccessPointList(engine) { Dock = DockStyle.Fill };
             list.LockClicked += b => engine.LockTo(b);
             list.UnlockClicked += b => engine.SetTarget(null);
             list.FavoriteClicked += b => engine.ToggleFavorite(b);
-            list.SelectedIndexChanged += (s, e) => UpdateButtons();
+            list.MoveClicked += (b, d) => engine.MoveFavorite(b, d);
+            list.MoreClicked += (b, p) => { list.Select(b); listMenu.Show(list, p); };
             list.KeyDown += (s, e) => { if (e.KeyCode == Keys.F2) RenameSelected(); };
             list.MouseDown += (s, e) =>
             {
@@ -251,42 +207,30 @@ namespace BSSIDLock
                 int i = list.IndexFromPoint(e.Location);
                 if (i >= 0 && list.Items[i] is ListRow r && r.Type == ListRow.Kind.AccessPoint) list.SelectedIndex = i;
             };
-
             listMenu = new ContextMenuStrip { Renderer = new MenuRenderer() };
             listMenu.Opening += (s, e) => { e.Cancel = list.SelectedBssid == null; if (!e.Cancel) BuildListMenu(); };
             listMenu.Opened += (s, e) => Theme.RoundCorners(listMenu.Handle);
             list.ContextMenuStrip = listMenu;
-
             listHost.Controls.Add(list);
-            return listHost;
+
+            empty = new EmptyState { Dock = DockStyle.Fill, Visible = false };
+
+            host.Controls.Add(listHost);
+            host.Controls.Add(empty);
+            return host;
         }
 
-        Control BuildButtons()
+        Control BuildFooter()
         {
-            var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            var left = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
-            var tips = new ToolTip();
-
-            Button Make(string text, string tip, EventHandler onClick)
-            {
-                var b = new Button { Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(10, 3, 10, 3), Margin = new Padding(0, 0, 6, 0) };
-                b.Click += onClick;
-                tips.SetToolTip(b, tip);
-                return b;
-            }
-
-            btnRename = Make("Rename…", "Give the selected access point a name you'll recognize (F2)", (s, e) => RenameSelected());
-            btnUp = Make("Move up", "Higher priority in \"Any favorite\" mode", (s, e) => { var b = list.SelectedBssid; if (b != null) engine.MoveFavorite(b, -1); });
-            btnDown = Make("Move down", "Lower priority in \"Any favorite\" mode", (s, e) => { var b = list.SelectedBssid; if (b != null) engine.MoveFavorite(b, 1); });
-            btnScan = Make("Scan", "Look for access points now", async (s, e) => await engine.ScanAsync());
-            btnScan.Margin = new Padding(0);
-
-            left.Controls.AddRange(new Control[] { btnRename, btnUp, btnDown });
-            row.Controls.Add(left, 0, 0);
-            row.Controls.Add(btnScan, 1, 0);
-            return row;
+            var bar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            footer = new Label { AutoSize = true, Tag = "subtle", Anchor = AnchorStyles.Left, Margin = new Padding(2, 0, 0, 0) };
+            updateLink = new LinkLabel { AutoSize = true, Anchor = AnchorStyles.Right, Visible = false, LinkBehavior = LinkBehavior.HoverUnderline, Margin = new Padding(0) };
+            updateLink.LinkClicked += async (s, e) => await updater.CheckAsync(userInitiated: true);
+            bar.Controls.Add(footer, 0, 0);
+            bar.Controls.Add(updateLink, 1, 0);
+            return bar;
         }
 
         void ApplyTheme()
@@ -295,19 +239,11 @@ namespace BSSIDLock
             Theme.Apply(this);
             listHost.BackColor = Theme.Border;
             list.ApplyTheme();
-            badge.Invalidate();
-            listSignature = null;   // force a redraw with the new colors
+            listSignature = null;   // redraw rows with the new colors
             UpdateUi();
         }
 
         // ---------------------------------------------------------------- updates
-
-        sealed class Choice
-        {
-            public string Bssid;
-            public string Text;
-            public override string ToString() => Text;
-        }
 
         void UpdateUi()
         {
@@ -320,53 +256,93 @@ namespace BSSIDLock
                 badge.State = engine.State;
                 title.Text = engine.Title;
                 detail.Text = engine.Detail;
+                lockSwitch.Checked = st.LockEnabled;
 
-                lockToggle.Checked = st.LockEnabled;
-                lockToggle.Text = st.LockEnabled ? "Lock is ON" : "Lock is OFF";
-                lockToggle.BackColor = st.LockEnabled ? Theme.Green : Theme.Gray;
-                lockToggle.FlatAppearance.MouseOverBackColor = Theme.Mix(lockToggle.BackColor, Color.White, 0.12f);
+                var options = new List<KeyValuePair<string, object>> { new KeyValuePair<string, object>("Any favorite (top first)", null) };
+                options.AddRange(st.Favorites.Select(b => new KeyValuePair<string, object>(engine.Label(b), b)));
+                lockTo.SetOptions(options);
+                lockTo.SelectedValue = st.Target;
+                lockTo.Enabled = lockToLabel.Enabled = st.LockEnabled;
+                scanButton.Enabled = !engine.Busy;
+                scanButton.Text = engine.Busy ? "Scanning…" : "Scan";
 
-                var choices = new List<Choice> { new Choice { Bssid = null, Text = "Any favorite (top first)" } };
-                choices.AddRange(st.Favorites.Select(b => new Choice { Bssid = b, Text = engine.Label(b) }));
-                if (lockTo.Items.Count != choices.Count || !choices.Select(c => c.Text).SequenceEqual(lockTo.Items.Cast<Choice>().Select(c => c.Text)))
-                {
-                    lockTo.Items.Clear();
-                    lockTo.Items.AddRange(choices.ToArray());
-                }
-                lockTo.SelectedIndex = Math.Max(0, choices.FindIndex(c => c.Bssid == st.Target));
-                lockTo.Enabled = st.LockEnabled;
+                UpdateContent();
 
-                if (engine.AccessDenied)
-                    ShowBanner("Windows is hiding Wi-Fi details from BSSIDLock. Turn on Location services and \"Let desktop apps access your location\".",
-                        "Open location settings", () => Process.Start("ms-settings:privacy-location"));
-                else if (engine.LastError != null && engine.Current == null)
-                    ShowBanner("Wi-Fi problem: " + engine.LastError, "Show activity", () => { using (var f = new ActivityForm(engine)) f.ShowDialog(this); });
-                else if (st.Ssid.Length == 0)
-                    ShowBanner("Choose which Wi-Fi network BSSIDLock should manage.", "Choose network…", OpenSettings);
-                else
-                    banner.Visible = false;
-
-                RebuildList();
-
-                footer.Text = engine.Busy ? "Scanning…"
-                    : engine.LastScan.HasValue ? "Last scan " + Ago(engine.LastScan.Value) + " · checks every " + st.IntervalSeconds + " s"
-                    : "Not scanned yet";
+                footer.Text = engine.LastScan.HasValue
+                    ? "Last scan " + Ago(engine.LastScan.Value) + "  ·  Wi-Fi changes are handled instantly, with a safety check every " + st.IntervalSeconds + " s"
+                    : engine.Busy ? "Scanning…" : "";
                 updateLink.Visible = updater.Busy || updater.AvailableVersion != null;
                 updateLink.Text = updater.Busy ? updater.Status : updater.AvailableVersion != null ? "Install version " + updater.AvailableVersion : "";
-                btnScan.Enabled = !engine.Busy;
 
                 tray.Update();
-                UpdateButtons();
             }
             finally { updating = false; }
         }
 
-        void ShowBanner(string text, string button, Action action)
+        /// <summary>Show the access point list, or a friendly message when something is needed first.</summary>
+        void UpdateContent()
         {
-            bannerText.Text = text;
-            bannerButton.Text = button;
-            bannerAction = action;
-            banner.Visible = true;
+            var st = engine.Settings;
+            string key =
+                engine.AccessDenied ? "denied"
+                : engine.LastError != null && engine.Current == null ? "error:" + engine.LastError
+                : st.Ssid.Length == 0 ? "choose:" + engine.Current?.Ssid
+                : null;
+
+            if (key != emptyKey)
+            {
+                emptyKey = key;
+                if (key == "denied")
+                {
+                    empty.SetContent(Ui.GlyphLocation, Theme.Orange, "Allow location access",
+                        "Windows hides Wi-Fi details from apps until you allow location access. BSSIDLock never uses your actual location; it only needs the access point addresses.",
+                        MakeButton("Open location settings", UiButton.Kind.Primary, () => Process.Start("ms-settings:privacy-location")),
+                        MakeButton("Try again", UiButton.Kind.Secondary, TryAgain));
+                }
+                else if (key != null && key.StartsWith("error:"))
+                {
+                    bool noAdapter = engine.LastError.StartsWith("No Wi-Fi adapter");
+                    empty.SetContent(noAdapter ? Ui.GlyphWifi : Ui.GlyphWarning, noAdapter ? Theme.Gray : Theme.Orange,
+                        noAdapter ? "No Wi-Fi adapter found" : "Wi-Fi isn't available",
+                        noAdapter
+                            ? "BSSIDLock needs a Wi-Fi adapter. If Windows is running in a virtual machine (Parallels, VMware, VirtualBox), it can't see your computer's Wi-Fi; run BSSIDLock on a PC with Wi-Fi instead."
+                            : engine.LastError,
+                        MakeButton("Try again", UiButton.Kind.Primary, TryAgain),
+                        MakeButton("Show activity", UiButton.Kind.Secondary, ShowActivity));
+                }
+                else if (key != null)
+                {
+                    var current = engine.Current?.Ssid;
+                    var buttons = new List<UiButton>();
+                    if (!string.IsNullOrEmpty(current))
+                    {
+                        buttons.Add(MakeButton("Use “" + current + "”", UiButton.Kind.Primary, () => engine.SetSsid(current)));
+                        buttons.Add(MakeButton("Choose another…", UiButton.Kind.Secondary, OpenSettings));
+                    }
+                    else buttons.Add(MakeButton("Choose network…", UiButton.Kind.Primary, OpenSettings));
+                    empty.SetContent(Ui.GlyphWifi, Theme.Accent, "Which network should BSSIDLock manage?",
+                        "It only acts while you're connected to that network and never touches any other.", buttons.ToArray());
+                }
+                Theme.Apply(this);   // style the new message
+                listHost.BackColor = Theme.Border;
+            }
+
+            empty.Visible = key != null;
+            listHost.Visible = key == null;
+            if (key == null) RebuildList();
+        }
+
+        UiButton MakeButton(string text, UiButton.Kind kind, Action onClick)
+        {
+            var b = new UiButton { Text = text, Style = kind, MinWidth = 120 };
+            b.Click += (s, e) => onClick();
+            return b;
+        }
+
+        async void TryAgain()
+        {
+            await engine.ScanAsync();
+            await engine.TickAsync();
         }
 
         void RebuildList()
@@ -381,36 +357,26 @@ namespace BSSIDLock
 
             var rows = new List<ListRow>
             {
-                new ListRow { Type = ListRow.Kind.Header, Text = "Favorites", Caption = st.Favorites.Count > 1 ? "top is preferred" : null }
+                new ListRow { Type = ListRow.Kind.Header, Text = "Favorites", Caption = st.Favorites.Count > 1 ? "the top one is preferred" : null }
             };
             if (st.Favorites.Count == 0)
                 rows.Add(new ListRow { Type = ListRow.Kind.Hint, Text = "Click the star on access points you're happy to use, or press Lock to stick to just one." });
             for (int i = 0; i < st.Favorites.Count; i++)
                 rows.Add(new ListRow { Type = ListRow.Kind.AccessPoint, Bssid = st.Favorites[i], Rank = i });
 
-            rows.Add(new ListRow { Type = ListRow.Kind.Header, Text = st.Ssid.Length > 0 ? "Other access points on \"" + st.Ssid + "\"" : "Other access points" });
+            rows.Add(new ListRow { Type = ListRow.Kind.Header, Text = "Other access points on “" + st.Ssid + "”" });
             var others = engine.Visible.Where(v => !st.Favorites.Contains(v.Bssid)).ToList();
             if (others.Count == 0)
                 rows.Add(new ListRow
                 {
                     Type = ListRow.Kind.Hint,
                     Text = engine.Busy ? "Scanning…"
-                        : st.Ssid.Length == 0 ? "Choose a network first."
                         : engine.Visible.Count == 0 ? "No access points found yet. Press Scan."
                         : "Every access point in range is already a favorite.",
                 });
             rows.AddRange(others.Select(ap => new ListRow { Type = ListRow.Kind.AccessPoint, Bssid = ap.Bssid }));
 
             list.SetRows(rows);
-        }
-
-        void UpdateButtons()
-        {
-            string b = list.SelectedBssid;
-            int rank = b != null ? engine.Settings.Favorites.IndexOf(b) : -1;
-            btnRename.Enabled = b != null;
-            btnUp.Enabled = rank > 0;
-            btnDown.Enabled = rank >= 0 && rank < engine.Settings.Favorites.Count - 1;
         }
 
         void BuildListMenu()
@@ -421,16 +387,20 @@ namespace BSSIDLock
             listMenu.Items.Add(engine.Settings.Target == b ? "Unlock (accept any favorite)" : "Lock to this access point", null,
                 (s, e) => { if (engine.Settings.Target == b) engine.SetTarget(null); else engine.LockTo(b); });
             listMenu.Items.Add(rank >= 0 ? "Remove from favorites" : "Add to favorites", null, (s, e) => engine.ToggleFavorite(b));
-            listMenu.Items.Add("Rename…", null, (s, e) => RenameSelected());
+            ((ToolStripMenuItem)listMenu.Items.Add("Rename…", null, (s, e) => RenameSelected())).ShortcutKeyDisplayString = "F2";
             if (rank >= 0)
             {
                 listMenu.Items.Add(new ToolStripSeparator());
-                listMenu.Items.Add("Move up", null, (s, e) => engine.MoveFavorite(b, -1)).Enabled = rank > 0;
-                listMenu.Items.Add("Move down", null, (s, e) => engine.MoveFavorite(b, 1)).Enabled = rank < engine.Settings.Favorites.Count - 1;
+                var up = listMenu.Items.Add("Move up", null, (s, e) => engine.MoveFavorite(b, -1));
+                up.Enabled = rank > 0;
+                ((ToolStripMenuItem)up).ShortcutKeyDisplayString = "Alt+Up";
+                var down = listMenu.Items.Add("Move down", null, (s, e) => engine.MoveFavorite(b, 1));
+                down.Enabled = rank < engine.Settings.Favorites.Count - 1;
+                ((ToolStripMenuItem)down).ShortcutKeyDisplayString = "Alt+Down";
             }
             listMenu.Items.Add(new ToolStripSeparator());
             listMenu.Items.Add("Copy address", null, (s, e) => Clipboard.SetText(b));
-            foreach (ToolStripItem it in listMenu.Items) it.Padding = new Padding(0, 2, 0, 2);
+            foreach (ToolStripItem it in listMenu.Items) it.Padding = new Padding(0, 3, 0, 3);
         }
 
         void RenameSelected()
@@ -438,9 +408,14 @@ namespace BSSIDLock
             string b = list.SelectedBssid;
             if (b == null) return;
             string name = Prompt.Show(this, "Name this access point",
-                "Give " + b + " a name you'll recognize (e.g. Living room).\nLeave it empty to show the address.",
+                "Give " + b + " a name you'll recognize, like “Living room”. Leave it empty to show the address.",
                 engine.NameOf(b) ?? "");
             if (name != null) engine.Rename(b, name);
+        }
+
+        void ShowActivity()
+        {
+            using (var f = new ActivityForm(engine)) f.ShowDialog(this);
         }
 
         void OpenSettings()
@@ -525,7 +500,7 @@ namespace BSSIDLock
             var d = DateTime.Now - t;
             if (d.TotalSeconds < 60) return (int)d.TotalSeconds + " s ago";
             if (d.TotalMinutes < 60) return (int)d.TotalMinutes + " min ago";
-            return t.ToString("t");
+            return "at " + t.ToString("t");
         }
     }
 

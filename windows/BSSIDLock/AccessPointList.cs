@@ -1,8 +1,7 @@
-// Custom-drawn list of access points (looks the same in light and dark mode).
+// Custom-drawn list of access points (looks the same in light and dark mode, at any display scaling).
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -25,11 +24,13 @@ namespace BSSIDLock
     {
         readonly Engine engine;
         int hoverIndex = -1;
-        string hoverPart;        // "lock", "star" or null
+        string hoverPart;        // "lock", "star", "up", "down", "more" or null
         bool adjusting;
         Font boldFont, smallFont, glyphFont, headerFont;
 
         public event Action<string> LockClicked, UnlockClicked, FavoriteClicked;
+        public event Action<string, int> MoveClicked;
+        public event Action<string, Point> MoreClicked;
 
         public AccessPointList(Engine engine)
         {
@@ -40,16 +41,16 @@ namespace BSSIDLock
             SetStyle(ControlStyles.ResizeRedraw, true);
         }
 
-        float DpiScale => DeviceDpi / 96f;
-        int S(float px) => (int)Math.Round(px * DpiScale);
+        // Sizes follow the font (which already follows Windows display scaling).
+        int S(float px) => Ui.S(this, px);
 
         void EnsureFonts()
         {
             if (boldFont != null) return;
-            boldFont = new Font("Segoe UI Semibold", Font.Size + 0.75f);
+            boldFont = new Font("Segoe UI Semibold", Font.Size + 0.5f);
             smallFont = new Font(Font.FontFamily, Font.Size - 0.5f);
             headerFont = new Font("Segoe UI Semibold", Font.Size - 1f);
-            glyphFont = new Font("Segoe MDL2 Assets", Font.Size + 2f);
+            glyphFont = new Font("Segoe MDL2 Assets", Font.Size + 1f);
         }
 
         protected override void OnFontChanged(EventArgs e)
@@ -86,6 +87,12 @@ namespace BSSIDLock
 
         public string SelectedBssid => SelectedItem is ListRow r && r.Type == ListRow.Kind.AccessPoint ? r.Bssid : null;
 
+        public void Select(string bssid)
+        {
+            for (int i = 0; i < Items.Count; i++)
+                if (((ListRow)Items[i]).Bssid == bssid) { SelectedIndex = i; return; }
+        }
+
         /// <summary>Replace the rows, keeping the selection and scroll position.</summary>
         public void SetRows(IList<ListRow> rows)
         {
@@ -95,9 +102,7 @@ namespace BSSIDLock
             BeginUpdate();
             Items.Clear();
             foreach (var r in rows) Items.Add(r);
-            if (selected != null)
-                for (int i = 0; i < Items.Count; i++)
-                    if (((ListRow)Items[i]).Bssid == selected) { SelectedIndex = i; break; }
+            if (selected != null) Select(selected);
             if (Items.Count > 0) TopIndex = Math.Min(top, Items.Count - 1);
             EndUpdate();
             adjusting = false;
@@ -109,12 +114,22 @@ namespace BSSIDLock
         protected override void OnMeasureItem(MeasureItemEventArgs e)
         {
             if (e.Index < 0 || e.Index >= Items.Count) return;
+            EnsureFonts();
             var row = (ListRow)Items[e.Index];
-            e.ItemHeight = S(row.Type == ListRow.Kind.AccessPoint ? 52 : row.Type == ListRow.Kind.Header ? 32 : 34);
+            switch (row.Type)
+            {
+                case ListRow.Kind.AccessPoint: e.ItemHeight = Math.Min(255, boldFont.Height + smallFont.Height + S(22)); break;
+                case ListRow.Kind.Header: e.ItemHeight = Math.Min(255, headerFont.Height + S(22)); break;
+                default: e.ItemHeight = Math.Min(255, Font.Height + S(18)); break;
+            }
         }
 
-        Rectangle LockRect(Rectangle b) { int w = S(76), h = S(28); return new Rectangle(b.Right - S(12) - w, b.Top + (b.Height - h) / 2, w, h); }
+        // Right-to-left: [more] [Lock] [star] [down] [up]
+        Rectangle MoreRect(Rectangle b) { int w = S(30), h = S(30); return new Rectangle(b.Right - S(10) - w, b.Top + (b.Height - h) / 2, w, h); }
+        Rectangle LockRect(Rectangle b) { var m = MoreRect(b); int w = S(78); return new Rectangle(m.Left - S(6) - w, m.Top, w, m.Height); }
         Rectangle StarRect(Rectangle b) { var l = LockRect(b); int w = S(32); return new Rectangle(l.Left - S(6) - w, l.Top, w, l.Height); }
+        Rectangle DownRect(Rectangle b) { var s = StarRect(b); int w = S(30); return new Rectangle(s.Left - S(2) - w, s.Top, w, s.Height); }
+        Rectangle UpRect(Rectangle b) { var d = DownRect(b); int w = S(30); return new Rectangle(d.Left - S(2) - w, d.Top, w, d.Height); }
 
         // ---------------------------------------------------------------- drawing
 
@@ -133,10 +148,14 @@ namespace BSSIDLock
                 var local = new Rectangle(0, 0, bounds.Width, bounds.Height);
                 bool isAp = row.Type == ListRow.Kind.AccessPoint;
                 bool selected = isAp && (e.State & DrawItemState.Selected) != 0;
-                Color bg = selected ? Theme.Selection
-                    : isAp && e.Index == hoverIndex ? Theme.Mix(Theme.Surface, Theme.Hover, 0.6f)
-                    : Theme.Surface;
-                g.Clear(bg);
+                g.Clear(Theme.Surface);
+                if (selected || (isAp && e.Index == hoverIndex))
+                {
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    var hl = new RectangleF(S(4), S(2), local.Width - S(8), local.Height - S(4));
+                    Ui.FillRound(g, hl, S(6), selected ? Theme.Selection : Theme.Mix(Theme.Surface, Theme.Hover, 0.7f));
+                    if (selected) Ui.FillRound(g, new RectangleF(S(4), S(12), S(3), local.Height - S(24)), S(1.5f), Theme.Accent);
+                }
 
                 switch (row.Type)
                 {
@@ -150,22 +169,23 @@ namespace BSSIDLock
 
         void DrawHeader(Graphics g, Rectangle r, ListRow row)
         {
-            var textRect = new Rectangle(S(14), r.Bottom - S(22), r.Width - S(28), S(18));
-            var size = TextRenderer.MeasureText(g, row.Text.ToUpperInvariant(), headerFont);
-            TextRenderer.DrawText(g, row.Text.ToUpperInvariant(), headerFont, textRect, Theme.Subtle,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            string text = row.Text.ToUpperInvariant();
+            int h = headerFont.Height;
+            var textRect = new Rectangle(S(16), r.Bottom - h - S(6), r.Width - S(32), h);
+            var size = TextRenderer.MeasureText(g, text, headerFont, Size.Empty, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, text, headerFont, textRect, Theme.Subtle, Ui.Left);
             if (!string.IsNullOrEmpty(row.Caption))
             {
-                var cap = new Rectangle(textRect.X + size.Width + S(4), textRect.Y, Math.Max(0, textRect.Right - textRect.X - size.Width - S(4)), textRect.Height);
-                TextRenderer.DrawText(g, row.Caption, smallFont, cap, Theme.Mix(Theme.Subtle, Theme.Surface, 0.25f),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                int x = textRect.X + size.Width + S(8);
+                TextRenderer.DrawText(g, row.Caption, smallFont, new Rectangle(x, textRect.Y, Math.Max(0, textRect.Right - x), h),
+                    Theme.Mix(Theme.Subtle, Theme.Surface, 0.3f), Ui.Left);
             }
         }
 
         void DrawHint(Graphics g, Rectangle r, ListRow row)
         {
-            TextRenderer.DrawText(g, row.Text, Font, new Rectangle(S(14), 0, r.Width - S(28), r.Height), Theme.Subtle,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            TextRenderer.DrawText(g, row.Text, Font, new Rectangle(S(16), 0, r.Width - S(32), r.Height), Theme.Subtle,
+                Ui.Left | TextFormatFlags.WordBreak);
         }
 
         void DrawAccessPoint(Graphics g, Rectangle r, ListRow row, int index, bool selected)
@@ -177,37 +197,32 @@ namespace BSSIDLock
             bool isTarget = engine.Settings.Target == b;
             bool isFav = row.Rank >= 0;
             bool hot = index == hoverIndex;
+            bool showTools = hot || selected;
 
-            if (selected)
-                using (var accent = new SolidBrush(Theme.Accent))
-                    g.FillRectangle(accent, 0, S(8), S(3), r.Height - S(16));
-
-            int x = S(12);
+            int x = S(16);
             // Priority number (favorites)
             if (isFav)
-                TextRenderer.DrawText(g, (row.Rank + 1).ToString(), smallFont, new Rectangle(x, 0, S(16), r.Height), Theme.Subtle,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            x += S(22);
+                TextRenderer.DrawText(g, (row.Rank + 1).ToString(), smallFont, new Rectangle(x, 0, S(16), r.Height), Theme.Subtle, Ui.Center);
+            x += S(24);
 
             // Signal bars
-            Theme.DrawBars(g, new Rectangle(x, r.Height / 2 - S(9), S(22), S(18)), ap?.Rssi, DpiScale);
-            x += S(34);
+            Theme.DrawBars(g, new Rectangle(x, r.Height / 2 - S(9), S(22), S(18)), ap?.Rssi, Ui.Unit(this));
+            x += S(36);
 
-            var lockRect = LockRect(r);
-            var starRect = StarRect(r);
-            int textRight = starRect.Left - S(8);
+            int textRight = (isFav ? UpRect(r).Left : StarRect(r).Left) - S(8);
             int width = Math.Max(0, textRight - x);
 
             // Title line: name (or address) + pills
             string title = name ?? b;
-            var titleSize = TextRenderer.MeasureText(g, title, boldFont, Size.Empty, TextFormatFlags.NoPadding);
-            int top = (r.Height - titleSize.Height - S(18)) / 2;
-            int titleWidth = Math.Min(titleSize.Width, width);
-            TextRenderer.DrawText(g, title, boldFont, new Rectangle(x, top, titleWidth + S(2), titleSize.Height),
-                ap == null ? Theme.Subtle : Theme.Text, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            int lineGap = S(3);
+            int top = (r.Height - boldFont.Height - smallFont.Height - lineGap) / 2;
+            int titleWidth = Math.Min(TextRenderer.MeasureText(g, title, boldFont, Size.Empty, TextFormatFlags.NoPadding).Width, width);
+            TextRenderer.DrawText(g, title, boldFont, new Rectangle(x, top, titleWidth + S(2), boldFont.Height),
+                ap == null ? Theme.Subtle : Theme.Text, Ui.Left);
             int px = x + titleWidth + S(8);
-            if (isCurrent) px = DrawPill(g, "Connected", Theme.Green, px, top + titleSize.Height / 2, textRight);
-            if (isTarget) DrawPill(g, "Locked", Theme.Accent, px, top + titleSize.Height / 2, textRight);
+            int pillCenter = top + boldFont.Height / 2;
+            if (isCurrent) px = DrawPill(g, "Connected", Theme.Green, px, pillCenter, textRight);
+            if (isTarget) DrawPill(g, "Locked", Theme.Accent, px, pillCenter, textRight);
 
             // Detail line
             var parts = new List<string>();
@@ -218,32 +233,48 @@ namespace BSSIDLock
                 parts.Add(Signal.Quality(ap.Rssi) + " (" + ap.Rssi + " dBm)");
             }
             else parts.Add("Out of range");
-            TextRenderer.DrawText(g, string.Join("  ·  ", parts), smallFont, new Rectangle(x, top + titleSize.Height + S(3), width, S(16)),
-                Theme.Subtle, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, string.Join("  ·  ", parts), smallFont,
+                new Rectangle(x, top + boldFont.Height + lineGap, width, smallFont.Height), Theme.Subtle, Ui.Left);
+
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+            // Reorder (favorites, on hover/selection)
+            if (isFav && showTools)
+            {
+                DrawGlyphButton(g, UpRect(r), Ui.GlyphUp, hot && hoverPart == "up", row.Rank > 0);
+                DrawGlyphButton(g, DownRect(r), Ui.GlyphDown, hot && hoverPart == "down", row.Rank < engine.Settings.Favorites.Count - 1);
+            }
 
             // Star
+            var starRect = StarRect(r);
             bool starHot = hot && hoverPart == "star";
-            if (starHot) FillRound(g, starRect, Theme.Hover);
+            if (starHot) Ui.FillRound(g, starRect, S(5), Theme.Hover);
             TextRenderer.DrawText(g, isFav ? "" : "", glyphFont, starRect,
-                isFav ? Theme.Star : starHot ? Theme.Text : Theme.Subtle,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                isFav ? Theme.Star : starHot ? Theme.Text : Theme.Subtle, Ui.Center);
 
-            // Lock / Unlock button
+            // Lock / Unlock
+            var lockRect = LockRect(r);
             bool lockHot = hot && hoverPart == "lock";
-            bool primary = !isTarget;
-            Color fill = primary ? (lockHot ? Theme.Mix(Theme.Accent, Theme.Text, 0.12f) : Theme.Accent)
-                                 : (lockHot ? Theme.Hover : Theme.Surface);
-            FillRound(g, lockRect, fill);
-            if (!primary)
-                using (var path = Theme.RoundRect(new RectangleF(lockRect.X + 0.5f, lockRect.Y + 0.5f, lockRect.Width - 1, lockRect.Height - 1), S(4)))
-                using (var pen = new Pen(Theme.Border))
-                {
-                    var old = g.SmoothingMode; g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.DrawPath(pen, path);
-                    g.SmoothingMode = old;
-                }
-            TextRenderer.DrawText(g, isTarget ? "Unlock" : "Lock", Font, lockRect, primary ? Theme.AccentText : Theme.Text,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            if (!isTarget)
+            {
+                Ui.FillRound(g, lockRect, S(5), lockHot ? Theme.Mix(Theme.Accent, Color.White, 0.12f) : Theme.Accent);
+                TextRenderer.DrawText(g, "Lock", Font, lockRect, Theme.AccentText, Ui.Center);
+            }
+            else
+            {
+                Ui.FillRound(g, lockRect, S(5), lockHot ? Theme.Hover : Theme.Surface);
+                Ui.DrawRound(g, lockRect, S(5), Theme.Border);
+                TextRenderer.DrawText(g, "Unlock", Font, lockRect, Theme.Text, Ui.Center);
+            }
+
+            // More (…)
+            DrawGlyphButton(g, MoreRect(r), Ui.GlyphMore, hot && hoverPart == "more", true);
+        }
+
+        void DrawGlyphButton(Graphics g, Rectangle rect, string glyph, bool hot, bool enabled)
+        {
+            if (hot && enabled) Ui.FillRound(g, rect, S(5), Theme.Hover);
+            TextRenderer.DrawText(g, glyph, glyphFont, rect, enabled ? (hot ? Theme.Text : Theme.Subtle) : Theme.Border, Ui.Center);
         }
 
         int DrawPill(Graphics g, string text, Color color, int x, int centerY, int maxRight)
@@ -251,20 +282,10 @@ namespace BSSIDLock
             var size = TextRenderer.MeasureText(g, text, smallFont, Size.Empty, TextFormatFlags.NoPadding);
             var rect = new Rectangle(x, centerY - size.Height / 2 - S(2), size.Width + S(14), size.Height + S(4));
             if (rect.Right > maxRight) return x;
-            FillRound(g, rect, Color.FromArgb(Theme.Dark ? 60 : 36, color));
-            TextRenderer.DrawText(g, text, smallFont, rect, Theme.Dark ? Theme.Mix(color, Color.White, 0.35f) : color,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            Ui.FillRound(g, rect, rect.Height / 2f, Color.FromArgb(Theme.Dark ? 60 : 36, color));
+            TextRenderer.DrawText(g, text, smallFont, rect, Theme.Dark ? Theme.Mix(color, Color.White, 0.35f) : color, Ui.Center);
             return rect.Right + S(6);
-        }
-
-        void FillRound(Graphics g, Rectangle r, Color color)
-        {
-            var old = g.SmoothingMode;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var path = Theme.RoundRect(r, S(4)))
-            using (var brush = new SolidBrush(color))
-                g.FillPath(brush, path);
-            g.SmoothingMode = old;
         }
 
         // ---------------------------------------------------------------- interaction
@@ -274,18 +295,25 @@ namespace BSSIDLock
             if (i >= 0 && i < Items.Count) Invalidate(GetItemRectangle(i));
         }
 
+        string PartAt(int index, Point p)
+        {
+            var row = (ListRow)Items[index];
+            var b = GetItemRectangle(index);
+            if (MoreRect(b).Contains(p)) return "more";
+            if (LockRect(b).Contains(p)) return "lock";
+            if (StarRect(b).Contains(p)) return "star";
+            if (row.Rank >= 0 && UpRect(b).Contains(p)) return "up";
+            if (row.Rank >= 0 && DownRect(b).Contains(p)) return "down";
+            return null;
+        }
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
             int i = IndexFromPoint(e.Location);
             string part = null;
-            if (i >= 0 && i < Items.Count && ((ListRow)Items[i]).Type == ListRow.Kind.AccessPoint)
-            {
-                var b = GetItemRectangle(i);
-                if (!b.Contains(e.Location)) i = -1;
-                else if (LockRect(b).Contains(e.Location)) part = "lock";
-                else if (StarRect(b).Contains(e.Location)) part = "star";
-            }
+            if (i >= 0 && i < Items.Count && ((ListRow)Items[i]).Type == ListRow.Kind.AccessPoint && GetItemRectangle(i).Contains(e.Location))
+                part = PartAt(i, e.Location);
             else i = -1;
 
             if (i != hoverIndex || part != hoverPart)
@@ -314,9 +342,19 @@ namespace BSSIDLock
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left || hoverIndex < 0 || hoverPart == null) return;
             var row = (ListRow)Items[hoverIndex];
-            if (hoverPart == "star") FavoriteClicked?.Invoke(row.Bssid);
-            else if (engine.Settings.Target == row.Bssid) UnlockClicked?.Invoke(row.Bssid);
-            else LockClicked?.Invoke(row.Bssid);
+            switch (hoverPart)
+            {
+                case "star": FavoriteClicked?.Invoke(row.Bssid); break;
+                case "up": if (row.Rank > 0) MoveClicked?.Invoke(row.Bssid, -1); break;
+                case "down": if (row.Rank < engine.Settings.Favorites.Count - 1) MoveClicked?.Invoke(row.Bssid, 1); break;
+                case "more":
+                    var m = MoreRect(GetItemRectangle(hoverIndex));
+                    MoreClicked?.Invoke(row.Bssid, new Point(m.Left, m.Bottom));
+                    break;
+                default:
+                    if (engine.Settings.Target == row.Bssid) UnlockClicked?.Invoke(row.Bssid); else LockClicked?.Invoke(row.Bssid);
+                    break;
+            }
         }
 
         protected override void OnDoubleClick(EventArgs e)
@@ -332,6 +370,8 @@ namespace BSSIDLock
             if (b == null) return;
             if (e.KeyCode == Keys.Enter) { LockClicked?.Invoke(b); e.Handled = true; }
             else if (e.KeyCode == Keys.Space) { FavoriteClicked?.Invoke(b); e.Handled = true; }
+            else if (e.Alt && e.KeyCode == Keys.Up) { MoveClicked?.Invoke(b, -1); e.Handled = true; }
+            else if (e.Alt && e.KeyCode == Keys.Down) { MoveClicked?.Invoke(b, 1); e.Handled = true; }
         }
 
         protected override void OnSelectedIndexChanged(EventArgs e)
@@ -349,6 +389,7 @@ namespace BSSIDLock
                 adjusting = false;
             }
             base.OnSelectedIndexChanged(e);
+            Invalidate();   // redraw the hover tools on the newly selected row
         }
     }
 }

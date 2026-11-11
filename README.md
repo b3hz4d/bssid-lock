@@ -107,7 +107,7 @@ cd bssid-lock
 open macos/build/BSSIDLock.app
 ```
 
-**Windows app.** Needs the [.NET SDK](https://dot.net) 8 or later, and builds on Windows, macOS or Linux:
+**Windows app.** Needs the [.NET SDK](https://dot.net) 8 or later (10 recommended), and builds on Windows, macOS or Linux:
 ```bash
 ./windows/build.sh               # macOS / Linux → windows/out/BSSIDLock.exe
 .\windows\build.ps1              # Windows (PowerShell)

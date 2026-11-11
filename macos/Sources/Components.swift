@@ -13,6 +13,8 @@ final class UIState: ObservableObject {
     @Published var pwDraft = ""
     @Published var showPassword = false
     @Published var manualBSSID = ""
+    @Published var customInterval = false
+    @Published var intervalText = ""
 
     func startRename(_ bssid: String, current: String?) {
         renameText = current ?? ""

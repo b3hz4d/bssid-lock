@@ -363,7 +363,8 @@ namespace BSSIDLock
             IsLocked = false;
             if (!Settings.LockEnabled) Set(LockState.Off, "Lock is off", "Windows picks the access point. " + ConnectionDetail);
             else if (AccessDenied) Set(LockState.Attention, "Location access needed", "Windows hides Wi-Fi details from apps without it.");
-            else if (LastError != null && Current == null) Set(LockState.Attention, "Wi-Fi problem", LastError);
+            else if (LastError != null && Current == null && LastError.StartsWith("No Wi-Fi adapter")) Set(LockState.Attention, "No Wi-Fi adapter", "BSSIDLock needs Wi-Fi to work.");
+            else if (LastError != null && Current == null) Set(LockState.Attention, "Wi-Fi isn't available", LastError);
             else if (Settings.Ssid.Length == 0) Set(LockState.Attention, "Choose a network", "Open Settings to pick the Wi-Fi network to manage.");
             else if (Current == null) Set(LockState.Idle, "Not connected to Wi-Fi", "Waiting for \"" + Settings.Ssid + "\".");
             else if (Current.Ssid != Settings.Ssid) Set(LockState.Idle, "Idle on \"" + Current.Ssid + "\"", "BSSIDLock only acts on \"" + Settings.Ssid + "\".");

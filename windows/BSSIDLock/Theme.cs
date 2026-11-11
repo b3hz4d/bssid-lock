@@ -11,7 +11,7 @@ namespace BSSIDLock
     static class Theme
     {
         public static bool Dark { get; private set; }
-        public static Color Window, Surface, Hover, Border, Text, Subtle, Accent, AccentText, Selection, BannerBack, BannerText;
+        public static Color Window, Surface, Field, Hover, Border, Text, Subtle, Accent, AccentText, Selection, BannerBack, BannerText;
 
         public static readonly Color Green = Color.FromArgb(22, 163, 74);
         public static readonly Color Orange = Color.FromArgb(217, 119, 6);
@@ -61,6 +61,7 @@ namespace BSSIDLock
             {
                 Window = Color.FromArgb(32, 32, 32);
                 Surface = Color.FromArgb(43, 43, 43);
+                Field = Color.FromArgb(31, 31, 31);
                 Hover = Color.FromArgb(58, 58, 58);
                 Border = Color.FromArgb(70, 70, 70);
                 Text = Color.FromArgb(243, 243, 243);
@@ -75,6 +76,7 @@ namespace BSSIDLock
             {
                 Window = Color.FromArgb(243, 243, 243);
                 Surface = Color.White;
+                Field = Color.White;
                 Hover = Color.FromArgb(234, 234, 234);
                 Border = Color.FromArgb(214, 214, 214);
                 Text = Color.FromArgb(27, 27, 27);
@@ -154,8 +156,20 @@ namespace BSSIDLock
                 case Button b:
                     StyleButton(b);
                     break;
+                case FieldBox fb:
+                    fb.BackColor = Field;
+                    fb.Box.BackColor = Field;
+                    fb.Box.ForeColor = Text;
+                    fb.Invalidate();
+                    return;
+                case Card card:
+                    card.BackColor = Surface;
+                    break;
+                case LinkLabel link:
+                    link.LinkColor = link.ActiveLinkColor = link.VisitedLinkColor = Accent;
+                    break;
                 case TextBox t:
-                    t.BackColor = Surface; t.ForeColor = Text;
+                    t.BackColor = Field; t.ForeColor = Text;
                     break;
                 case NumericUpDown n:
                     n.BackColor = Surface; n.ForeColor = Text;
@@ -184,6 +198,9 @@ namespace BSSIDLock
                     break;
                 case Panel p when tag == "banner":
                     p.BackColor = BannerBack;
+                    break;
+                case Panel sep when tag == "separator":
+                    sep.BackColor = Border;
                     break;
             }
             foreach (Control child in c.Controls) ApplyTo(child);

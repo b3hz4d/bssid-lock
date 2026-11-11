@@ -6,19 +6,22 @@ struct SettingsSheet: View {
     @EnvironmentObject var ui: UIState
     @EnvironmentObject var updater: Updater
 
+    private static let intervalPresets = [5, 10, 15, 30, 60]
+    private static let customTag = -1
+
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 Section {
                     HStack {
-                        TextField("Network name", text: $ui.ssidDraft)
+                        TextField("Network name", text: $ui.ssidDraft, prompt: Text("Network name"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                             .onSubmit(applySSID)
                         Menu("Nearby") {
                             if e.nearby.isEmpty { Text("No networks found") }
                             ForEach(e.nearby) { n in
-                                Button(n.count > 1 ? "\(n.ssid)  (\(n.count) access points)" : n.ssid) {
-                                    ui.ssidDraft = n.ssid
-                                }
+                                Button(n.count > 1 ? "\(n.ssid)  (\(n.count) access points)" : n.ssid) { ui.ssidDraft = n.ssid }
                             }
                             Divider()
                             Button("Scan Again") { Task { await e.scanNetworks() } }
@@ -43,14 +46,68 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    Picker("Safety check", selection: intervalChoice) {
+                        ForEach(Self.intervalPresets, id: \.self) { Text("Every \($0) seconds").tag($0) }
+                        Divider()
+                        Text("Custom…").tag(Self.customTag)
+                    }
+                    .pickerStyle(.menu)
+                    if intervalChoice.wrappedValue == Self.customTag {
+                        HStack {
+                            Text("Check every")
+                            Spacer()
+                            TextField("Seconds", text: $ui.intervalText, prompt: Text("3–120"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 70)
+                            Text("seconds")
+                        }
+                        if !customIntervalValid {
+                            Text("Enter a whole number from 3 to 120.").font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    Toggle("Open at login", isOn: Binding(get: { e.launchAtLogin }, set: { e.setLaunchAtLogin($0) }))
+                    Toggle("Notify me when the Wi-Fi network or access point changes", isOn: $e.notifyChanges)
+                } header: {
+                    Text("Behavior")
+                } footer: {
+                    Text("Wi-Fi changes are handled instantly. The safety check is only a backup.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    HStack {
+                        TextField("Access point address", text: $ui.manualBSSID, prompt: Text("aa:bb:cc:dd:ee:ff"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .font(.body.monospaced())
+                            .onSubmit(addManual)
+                        Button("Add", action: addManual)
+                            .disabled(!isValidBSSID(ui.manualBSSID))
+                    }
+                    if !ui.manualBSSID.isEmpty && !isValidBSSID(ui.manualBSSID) {
+                        Text("An address is 6 pairs of characters (0–9, a–f), like aa:bb:cc:dd:ee:ff.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Add a favorite by address")
+                } footer: {
+                    Text("Useful for an access point that's out of range right now.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
                     HStack {
                         Group {
                             if ui.showPassword {
-                                TextField("Password", text: $ui.pwDraft)
+                                TextField("Password", text: $ui.pwDraft, prompt: Text("Wi-Fi password"))
                             } else {
-                                SecureField("Password", text: $ui.pwDraft)
+                                SecureField("Password", text: $ui.pwDraft, prompt: Text("Wi-Fi password"))
                             }
                         }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         .onSubmit { e.savePassword(ui.pwDraft) }
                         Button { ui.showPassword.toggle() } label: {
                             Image(systemName: ui.showPassword ? "eye.slash" : "eye")
@@ -83,27 +140,6 @@ struct SettingsSheet: View {
                     Text("Version \(Updater.currentVersion). Updates come only from this project's GitHub releases and are verified before installing.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-
-                Section("Behavior") {
-                    Stepper("Check every \(Int(e.interval)) seconds", value: $e.interval, in: 3...120, step: 1)
-                    Toggle("Open at login", isOn: Binding(get: { e.launchAtLogin }, set: { e.setLaunchAtLogin($0) }))
-                    Toggle("Notify me when the Wi-Fi network or access point changes", isOn: $e.notifyChanges)
-                }
-
-                Section {
-                    HStack {
-                        TextField("aa:bb:cc:dd:ee:ff", text: $ui.manualBSSID)
-                            .font(.body.monospaced())
-                            .onSubmit(addManual)
-                        Button("Add", action: addManual)
-                            .disabled(!isValidBSSID(ui.manualBSSID))
-                    }
-                } header: {
-                    Text("Add a favorite by address")
-                } footer: {
-                    Text("Useful for an access point that's out of range right now.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
             .formStyle(.grouped)
 
@@ -115,13 +151,45 @@ struct SettingsSheet: View {
             }
             .padding(12)
         }
-        .frame(width: 520, height: 640)
+        .frame(width: 540, height: 660)
         .onAppear {
             ui.ssidDraft = e.ssid
             ui.pwDraft = e.password
+            ui.intervalText = String(Int(e.interval))
+            ui.customInterval = !Self.intervalPresets.contains(Int(e.interval))
             if e.nearby.isEmpty { Task { await e.scanNetworks() } }
         }
         .onReceive(e.$password) { ui.pwDraft = $0 }
+        // Only hex digits and separators in the address field.
+        .onReceive(ui.$manualBSSID) { value in
+            let cleaned = String(value.lowercased().filter { $0.isHexDigit || $0 == ":" || $0 == "-" }.prefix(17))
+            if cleaned != value { ui.manualBSSID = cleaned }
+        }
+        // Custom interval: digits only; apply as soon as it's a valid number.
+        .onReceive(ui.$intervalText) { value in
+            let digits = String(value.filter(\.isNumber).prefix(3))
+            if digits != value { ui.intervalText = digits; return }
+            if let n = Int(digits), (3...120).contains(n), ui.customInterval { e.interval = Double(n) }
+        }
+    }
+
+    private var intervalChoice: Binding<Int> {
+        Binding(
+            get: { ui.customInterval ? Self.customTag : Int(e.interval) },
+            set: { value in
+                if value == Self.customTag {
+                    ui.customInterval = true
+                    ui.intervalText = String(Int(e.interval))
+                } else {
+                    ui.customInterval = false
+                    e.interval = Double(value)
+                }
+            })
+    }
+
+    private var customIntervalValid: Bool {
+        guard let n = Int(ui.intervalText) else { return false }
+        return (3...120).contains(n)
     }
 
     private var draftSSID: String { ui.ssidDraft.trimmingCharacters(in: .whitespaces) }
