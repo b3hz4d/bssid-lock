@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   macos:
-    name: macOS app
+    name: macOS app + installer
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +26,23 @@ jobs:
         with:
           name: BSSIDLock-macOS
           path: macos/build/BSSIDLock-macOS.zip
+
+      - name: Test install.sh against a local release, then launch the app
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          cp macos/build/BSSIDLock-macOS.zip "$RUNNER_TEMP/release/"
+          (cd "$RUNNER_TEMP/release" && shasum -a 256 BSSIDLock-macOS.zip > SHA256SUMS.txt)
+          BSSIDLOCK_BASE_URL="file://$RUNNER_TEMP/release" ./install.sh --dir="$RUNNER_TEMP/Applications"
+          sleep 10
+          pgrep -f "$RUNNER_TEMP/Applications/BSSIDLock.app/Contents/MacOS/BSSIDLock" || { echo "BSSIDLock is not running"; exit 1; }
+          ./install.sh --uninstall --dir="$RUNNER_TEMP/Applications"
+          test ! -e "$RUNNER_TEMP/Applications/BSSIDLock.app"
+
+      - name: Test install.sh --source
+        run: |
+          mkdir -p "$RUNNER_TEMP/src" && tar -czf "$RUNNER_TEMP/src/main.tar.gz" --exclude ./.git --exclude ./macos/build -s ',^\.,bssid-lock-main,' .
+          BSSIDLOCK_SOURCE_URL="file://$RUNNER_TEMP/src/main.tar.gz" BSSIDLOCK_NO_OPEN=1 ./install.sh --source --dir="$RUNNER_TEMP/FromSource"
+          codesign --verify --strict "$RUNNER_TEMP/FromSource/BSSIDLock.app"
 
   windows:
     name: Windows app
@@ -44,3 +61,47 @@ jobs:
         with:
           name: BSSIDLock-Windows
           path: windows/out/BSSIDLock.exe
+
+  windows-installer:
+    name: Windows installer + launch test
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: BSSIDLock-Windows
+          path: release
+
+      - name: Serve a local release
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash release/BSSIDLock.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  BSSIDLock.exe" | Set-Content release/SHA256SUMS.txt
+          Start-Process python -ArgumentList '-m', 'http.server', '8765', '--directory', 'release' -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+
+      # Exactly what users run ("irm ... | iex"), in Windows PowerShell 5.1 like most PCs.
+      - name: Install with "irm | iex" and check the app keeps running
+        shell: powershell
+        env:
+          BSSIDLOCK_BASE_URL: http://127.0.0.1:8765
+        run: |
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          Start-Sleep -Seconds 15
+          $p = Get-Process BSSIDLock -ErrorAction SilentlyContinue
+          if (-not $p) { throw 'BSSIDLock is not running after install' }
+          $log = Join-Path $env:APPDATA 'BSSIDLock\error.log'
+          if (Test-Path $log) { Get-Content $log; throw 'BSSIDLock wrote an error log' }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\BSSIDLock\BSSIDLock.exe'))) { throw 'exe not installed' }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'BSSIDLock.lnk'))) { throw 'Start menu shortcut missing' }
+          Write-Host "OK: running from $($p.Path)"
+
+      - name: Uninstall
+        shell: powershell
+        run: |
+          & ([scriptblock]::Create((Get-Content install.ps1 -Raw))) -Uninstall
+          if (Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\BSSIDLock')) { throw 'install folder still there' }
+          if (Get-Process BSSIDLock -ErrorAction SilentlyContinue) { throw 'BSSIDLock still running' }
+          Write-Host 'OK: removed'

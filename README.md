@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/b3hz4d/bssid-lock/releases/latest"><b>Download</b></a> ·
+  <a href="#install"><b>Install</b></a> ·
   <a href="#first-run">First run</a> ·
   <a href="#is-it-safe">Is it safe?</a> ·
   <a href="#build-from-source">Build from source</a>
@@ -30,20 +30,35 @@ BSSIDLock does:
 - **Lives in the menu bar (macOS) or notification area (Windows).** Switch the lock target or turn the lock off from there.
 - **Start at login**, quietly in the background.
 
-## Download
+## Install
 
-Get the latest version from **[Releases](https://github.com/b3hz4d/bssid-lock/releases/latest)**:
+One command, no certificates, no security warnings. It installs for your user only; no administrator password is needed.
 
-| Platform | File | Requirements |
-| --- | --- | --- |
-| macOS | `BSSIDLock-macOS.zip` | macOS 13 Ventura or later, Apple silicon or Intel |
-| Windows | `BSSIDLock.exe` | Windows 10 (1903+) or 11, nothing to install |
+**macOS** (13 Ventura or later, Apple silicon or Intel). Paste into Terminal:
 
-**macOS:** unzip the file, move **BSSIDLock** to Applications, and open it.
+```bash
+curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh | bash
+```
 
-**Windows:** run `BSSIDLock.exe` from anywhere, for example a folder in your user profile. It doesn't install anything or need administrator rights.
+**Windows** (10 version 1903+ or 11). Paste into PowerShell:
 
-> The first time you open a downloaded build, macOS or Windows may warn you about an app from an unknown developer. That's normal for a new open-source app; see [Is it safe?](#is-it-safe) for why it happens and how to check the file.
+```powershell
+irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1 | iex
+```
+
+The installer downloads the latest release, checks it against the release's SHA-256 checksums, installs it (to `/Applications`, or `%LOCALAPPDATA%\Programs\BSSIDLock` with a Start menu shortcut on Windows) and opens it. Run the same command again to update.
+
+<details>
+<summary>Other ways to install, and uninstalling</summary>
+
+- **Build it yourself on a Mac:** `curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh | bash -s -- --source`. This compiles the app from source on your Mac in under a minute, and needs Apple's free Command Line Tools.
+- **Manual download:** get `BSSIDLock-macOS.zip` or `BSSIDLock.exe` from [Releases](https://github.com/b3hz4d/bssid-lock/releases/latest). Files downloaded with a browser show an "unknown developer" warning the first time.
+  - **macOS:** open the app, then go to System Settings → Privacy & Security → **Open Anyway**.
+  - **Windows:** **More info** → **Run anyway**.
+- **Uninstall on macOS:** `curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh | bash -s -- --uninstall`
+- **Uninstall on Windows:** `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1))) -Uninstall`
+
+</details>
 
 ## First run
 
@@ -74,12 +89,7 @@ Yes, and you can check that yourself:
   - Settings stay on your computer. The optional macOS Wi-Fi password goes in your Keychain.
 - **The Windows app is plain .NET Framework,** with no packer, bundler or obfuscation. Antivirus engines can read exactly what it does.
 
-**About the "unknown developer" warning:** operating systems warn about any app that isn't signed with a paid code-signing certificate. Windows also warns about apps that don't have download reputation yet. The warning isn't a malware detection.
-- **Windows:** in the SmartScreen prompt, choose **More info** → **Run anyway**.
-- **macOS:** open the app once, then go to System Settings → Privacy & Security and click **Open Anyway**.
-- **Avoid the warning entirely:** [build it yourself](#build-from-source). It takes about a minute.
-
-Signed builds are on the [roadmap](#roadmap). Maintainers can see [docs/SIGNING.md](docs/SIGNING.md).
+**Why there's no "unknown developer" warning with the installer:** macOS Gatekeeper and Windows SmartScreen only check files that a web browser marked as "downloaded from the internet". Those checks exist to catch apps that aren't signed with a paid code-signing certificate. Files fetched by `curl` or PowerShell, and apps you build yourself, don't carry that mark. Windows Defender and macOS XProtect still scan the app as usual. Either way, you're trusting this repository, so the installers are short and readable: [install.sh](install.sh) and [install.ps1](install.ps1). Read them first if you like, or build from source.
 
 ## Build from source
 
@@ -130,6 +140,7 @@ If none of your choices is in range, it waits 60 seconds before trying again, so
 ## Project layout
 
 ```
+install.sh / install.ps1 One-line installers for macOS / Windows
 assets/                  Shared icon (icon-1024.png) and the scripts that draw it / build the .ico
 macos/                   macOS app: SwiftUI sources, Info.plist, build.sh, notarize.sh
 windows/                 Windows app: WinForms on .NET Framework 4.8, build.sh / build.ps1
@@ -141,8 +152,9 @@ docs/SIGNING.md          How releases get signed (for maintainers)
 
 - [x] macOS app
 - [x] Windows app
-- [ ] Signed and notarized macOS builds; signed Windows builds
-- [ ] `winget` and Homebrew packages
+- [x] One-line installers (no certificates needed)
+- [ ] `winget` and Scoop packages
+- [ ] Optional signed builds for manual downloads
 - [ ] Separate favorites for each network
 - [ ] Linux (NetworkManager already supports `bssid` per connection; a tray app could wrap it)
 

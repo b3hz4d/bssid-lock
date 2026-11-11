@@ -54,6 +54,7 @@ namespace BSSIDLock.Native
         const int WlanConnectionModeProfile = 0;
         const int WlanInterfaceStateConnected = 1;
         const int ErrorInvalidState = 5023;               // not connected
+        const int ErrorServiceNotActive = 1062;           // WLAN AutoConfig service stopped
 
         const int InterfaceInfoSize = 16 + 512 + 4;       // GUID + WCHAR[256] + state
         const int BssEntrySize = 360;                     // sizeof(WLAN_BSS_ENTRY)
@@ -104,7 +105,15 @@ namespace BSSIDLock.Native
 
             public Session()
             {
-                int rc = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out Handle);
+                int rc;
+                try { rc = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out Handle); }
+                catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException)
+                {
+                    // wlanapi.dll is missing on PCs without the Wireless LAN service (e.g. some Windows Server editions).
+                    throw new WlanException("Wi-Fi isn't available on this PC (the Wireless LAN service isn't installed).");
+                }
+                if (rc == ErrorServiceNotActive)
+                    throw new WlanException("The Wi-Fi service (WLAN AutoConfig) isn't running. Turn on Wi-Fi, or start the service in services.msc.");
                 if (rc != 0) throw new WlanException("Opening the Wi-Fi service", rc);
 
                 rc = WlanEnumInterfaces(Handle, IntPtr.Zero, out IntPtr list);

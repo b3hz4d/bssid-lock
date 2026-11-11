@@ -1,5 +1,7 @@
 # Signing releases (for maintainers)
 
+> **Signing is optional.** Users who install with the one-line installers (`install.sh` / `install.ps1`) or build from source never see a warning, because those files don't carry the browser's "downloaded from the internet" mark. Signing only matters for people who download release files manually in a browser.
+
 Unsigned apps trigger "unknown developer" warnings: **SmartScreen** on Windows and **Gatekeeper** on macOS. These warnings are about identity and reputation, not malware detections, but they put people off. This page explains what is already done to keep BSSIDLock from looking suspicious, and how to turn on real code signing.
 
 The [release workflow](../.github/workflows/release.yml) signs automatically once the secrets below exist. Without them it still publishes working, unsigned builds.
