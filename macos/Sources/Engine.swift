@@ -72,6 +72,7 @@ enum Keychain {
 
 struct AP: Identifiable, Hashable, Sendable {
     let bssid: String
+    let ssid: String
     let rssi: Int
     let channel: Int
     let band: String
@@ -95,9 +96,24 @@ struct NetworkSummary: Identifiable, Hashable, Sendable {
 
 struct WorkResult: Sendable {
     var aps: [AP]
+    var nearby: [NetworkSummary] = []
     var scanned: Bool      // false if the scan itself failed or BSSIDs were hidden
     var message: String
     var ok: Bool
+}
+
+/// Activity messages, kept apart from the engine so new lines don't redraw the whole window.
+@MainActor
+final class ActivityLog: ObservableObject {
+    @Published private(set) var lines: [String] = []
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
+    func add(_ s: String) {
+        lines.append("\(Self.timeFmt.string(from: Date()))  \(s)")
+        if lines.count > 300 { lines.removeFirst(lines.count - 300) }
+    }
 }
 
 enum SignalQuality {
@@ -163,10 +179,10 @@ final class NetworkCache: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [String: (net: CWNetwork, ssid: String, time: Date)] = [:]
 
-    func store(_ nets: [CWNetwork], ssid: String) {
+    func store(_ nets: [CWNetwork]) {
         lock.lock(); defer { lock.unlock() }
         let now = Date()
-        for n in nets { if let b = n.bssid { entries[canonical(b)] = (n, ssid, now) } }
+        for n in nets { if let b = n.bssid { entries[canonical(b)] = (n, n.ssid ?? "", now) } }
     }
 
     func lookup(bssid: String, ssid: String, maxAge: TimeInterval) -> CWNetwork? {
@@ -236,6 +252,8 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     @Published var currentSSID: String?
     @Published var currentBSSID: String?
     @Published var currentRSSI = 0
+    @Published var currentChannel = 0
+    @Published var currentBand = ""
     @Published var visible: [AP] = []
     @Published var nearby: [NetworkSummary] = []
     @Published var lastScan: Date?
@@ -243,7 +261,8 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     @Published var statusTitle = "Starting…"
     @Published var statusDetail = ""
     @Published var isLocked = false
-    @Published var log: [String] = []
+    let activity = ActivityLog()
+    var log: [String] { activity.lines }
     @Published var locAuth: CLAuthorizationStatus = .notDetermined
     @Published var busy = false
     @Published var launchAtLogin = false
@@ -255,6 +274,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     private var announced: (ssid: String?, bssid: String?)?
     private var changeCheck: Task<Void, Never>?
     private var lastSwitchByUs = Date.distantPast
+    private var windowOpen = false, popoverOpen = false
     private static let retryBackoff: TimeInterval = 60
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
@@ -378,19 +398,49 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
 
     /// Favorites in priority order (including ones out of range).
     var favoriteItems: [APItem] {
-        favorites.enumerated().map { i, b in APItem(bssid: b, ap: visible.first { $0.bssid == b }, rank: i) }
+        favorites.enumerated().map { i, b in APItem(bssid: b, ap: liveAP(b), rank: i) }
     }
-    /// Access points in range that aren't favorites, strongest first.
+    /// Access points of the managed network that aren't favorites, strongest first.
     var otherItems: [APItem] {
-        visible.filter { !favorites.contains($0.bssid) }.map { APItem(bssid: $0.bssid, ap: $0, rank: nil) }
+        var items = visible.filter { $0.ssid == ssid && !favorites.contains($0.bssid) }.map { APItem(bssid: $0.bssid, ap: liveAP($0.bssid), rank: nil) }
+        // The access point we're on, even if the last scan missed it.
+        if let b = currentBSSID, currentSSID == ssid, !favorites.contains(b), !items.contains(where: { $0.bssid == b }) {
+            items.insert(APItem(bssid: b, ap: liveAP(b), rank: nil), at: 0)
+        }
+        return items
+    }
+
+    /// Freshest reading for an access point: live values for the one we're connected to, else the last scan.
+    func liveAP(_ b: String) -> AP? {
+        let scanned = visible.first { $0.bssid == b }
+        guard b == currentBSSID, currentRSSI != 0 else { return scanned }
+        return AP(bssid: b, ssid: currentSSID ?? scanned?.ssid ?? "", rssi: currentRSSI,
+                  channel: currentChannel != 0 ? currentChannel : scanned?.channel ?? 0,
+                  band: currentBand.isEmpty ? scanned?.band ?? "?" : currentBand)
+    }
+
+    // MARK: Viewing (signal readings refresh only while someone is looking)
+
+    var viewing: Bool { windowOpen || popoverOpen }
+
+    func setViewing(window: Bool? = nil, popover: Bool? = nil) {
+        let was = viewing
+        if let window { windowOpen = window }
+        if let popover { popoverOpen = popover }
+        if viewing && !was { Task { await refreshSignalsIfDue(staleAfter: 5) } }
+    }
+
+    /// While the window or menu bar popover is open, rescan once per interval so signal strengths stay current.
+    private func refreshSignalsIfDue(staleAfter: TimeInterval? = nil) async {
+        guard viewing, locationOK, !busy else { return }
+        let every = staleAfter ?? max(10, interval) - 0.5
+        if let last = lastScan, Date().timeIntervalSince(last) < every { return }
+        await scan(quiet: true)
     }
 
     // MARK: Loop
 
-    func addLog(_ s: String) {
-        log.append("\(Self.timeFmt.string(from: Date()))  \(s)")
-        if log.count > 300 { log.removeFirst(log.count - 300) }
-    }
+    func addLog(_ s: String) { activity.add(s) }
 
     /// Read the current connection. Only publishes real changes, so SwiftUI doesn't redraw for nothing.
     func refresh() {
@@ -398,8 +448,13 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         let s = i?.ssid()
         let b = i?.bssid().map(canonical)
         let r = i?.rssiValue() ?? 0
+        let ch = i?.wlanChannel()
+        let chNum = ch?.channelNumber ?? 0
+        let band = ch.map { Engine.bandName($0) } ?? ""
         if currentSSID != s { currentSSID = s }
         if currentBSSID != b { currentBSSID = b }
+        if currentChannel != chNum { currentChannel = chNum }
+        if currentBand != band { currentBand = band }
         trackChange(ssid: s, bssid: b)
         if abs(currentRSSI - r) >= 3 || (currentRSSI == 0) != (r == 0) { currentRSSI = r }   // ignore ±2 dBm jitter
     }
@@ -462,6 +517,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         if locationOK && !adoptCurrentNetworkIfUnset() { await scan() }
         while true {
             await tick()
+            await refreshSignalsIfDue()
             try? await Task.sleep(for: .seconds(max(3, interval)))
         }
     }
@@ -536,9 +592,9 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         guard !busy, !ssid.isEmpty else { return false }
         busy = true
         defer { busy = false }
-        let (s, pw) = (ssid, password)
-        let r = await Task.detached { Engine.doWork(ssid: s, order: order, password: pw, associate: true) }.value
-        if r.scanned { visible = r.aps; lastScan = Date() }
+        let (s, pw, favs) = (ssid, password, favorites)
+        let r = await Task.detached { Engine.doWork(ssid: s, favorites: favs, order: order, password: pw, associate: true) }.value
+        apply(r)
         addLog(r.message)
         refresh()
         if r.ok { lastSwitchByUs = Date() }
@@ -548,25 +604,27 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         return r.ok
     }
 
-    /// Scan for access points of the managed network.
-    func scan() async {
-        guard !busy, !ssid.isEmpty, locationOK else { return }
-        busy = true
-        defer { busy = false }
-        let s = ssid
-        let r = await Task.detached { Engine.doWork(ssid: s, order: [], password: "", associate: false) }.value
-        if r.scanned { visible = r.aps; lastScan = Date() }
-        addLog(r.message)
-        refresh()
-    }
-
-    /// Scan for all network names nearby (for choosing which network to manage).
-    func scanNetworks() async {
+    /// One scan updates everything: the managed network's access points, favorites on any network,
+    /// and the list of nearby network names. `quiet` scans (periodic refreshes) only log problems.
+    func scan(quiet: Bool = false) async {
         guard !busy, locationOK else { return }
         busy = true
         defer { busy = false }
-        nearby = await Task.detached { Engine.scanAll() }.value
+        let (s, favs) = (ssid, favorites)
+        let r = await Task.detached { Engine.doWork(ssid: s, favorites: favs, order: [], password: "", associate: false) }.value
+        apply(r)
+        if !quiet || !r.ok { addLog(r.message) }
         refresh()
+    }
+
+    /// Scan for nearby network names (same scan as above).
+    func scanNetworks() async { await scan() }
+
+    private func apply(_ r: WorkResult) {
+        guard r.scanned else { return }
+        if visible != r.aps { visible = r.aps }
+        if !r.nearby.isEmpty && nearby != r.nearby { nearby = r.nearby }
+        lastScan = Date()
     }
 
     /// Lock to one BSSID (adds it to favorites if needed) and switch to it now.
@@ -600,9 +658,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         }
     }
 
-    nonisolated static func scanAll() -> [NetworkSummary] {
-        guard let iface = CWWiFiClient.shared().interface(),
-              let nets = try? iface.scanForNetworks(withName: nil) else { return [] }
+    nonisolated static func summarize(_ nets: Set<CWNetwork>) -> [NetworkSummary] {
         var best: [String: (rssi: Int, count: Int)] = [:]
         for n in nets {
             guard let s = n.ssid, !s.isEmpty else { continue }
@@ -613,7 +669,9 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
             .sorted { $0.rssi > $1.rssi }
     }
 
-    nonisolated static func doWork(ssid: String, order: [String], password: String, associate: Bool) -> WorkResult {
+    /// Scan (one pass over all channels), and optionally join the first wanted access point in range.
+    /// Only access points of the managed network are ever joined.
+    nonisolated static func doWork(ssid: String, favorites: [String], order: [String], password: String, associate: Bool) -> WorkResult {
         guard let iface = CWWiFiClient.shared().interface() else {
             return .init(aps: [], scanned: false, message: "No Wi-Fi interface", ok: false)
         }
@@ -625,39 +683,45 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         }
 
         let nets: Set<CWNetwork>
-        do { nets = try iface.scanForNetworks(withSSID: ssid.data(using: .utf8)) }
+        do { nets = try iface.scanForNetworks(withName: nil) }
         catch { return .init(aps: [], scanned: false, message: "Scan failed: \(error.localizedDescription)", ok: false) }
 
         let withB = nets.filter { $0.bssid != nil }
-        NetworkCache.shared.store(Array(withB), ssid: ssid)
+        NetworkCache.shared.store(Array(withB))
         if withB.isEmpty {
-            if nets.isEmpty { return .init(aps: [], scanned: true, message: "Scan: no “\(ssid)” access points in range", ok: false) }
+            if nets.isEmpty { return .init(aps: [], scanned: true, message: "Scan: no Wi-Fi networks in range", ok: false) }
             return .init(aps: [], scanned: false, message: "Scan: access point addresses hidden (Location access needed)", ok: false)
         }
-        // One row per BSSID (a scan can list the same access point twice); keep the strongest reading.
+
+        // Keep the managed network's access points plus favorites on any network; one row per BSSID.
+        let favSet = Set(favorites)
         var best: [String: AP] = [:]
         for n in withB {
-            let ap = AP(bssid: canonical(n.bssid!), rssi: n.rssiValue,
-                        channel: n.wlanChannel?.channelNumber ?? 0, band: bandName(n.wlanChannel))
-            if let old = best[ap.bssid], old.rssi >= ap.rssi { continue }
-            best[ap.bssid] = ap
+            let b = canonical(n.bssid!), s = n.ssid ?? ""
+            guard s == ssid || favSet.contains(b) else { continue }
+            let ap = AP(bssid: b, ssid: s, rssi: n.rssiValue, channel: n.wlanChannel?.channelNumber ?? 0, band: bandName(n.wlanChannel))
+            if let old = best[b], old.rssi >= ap.rssi { continue }
+            best[b] = ap
         }
         let aps = best.values.sorted { $0.rssi > $1.rssi }
+        let nearby = summarize(nets)
         guard associate else {
-            return .init(aps: aps, scanned: true, message: "Scan: found \(aps.count) access point(s)", ok: true)
+            let count = aps.filter { $0.ssid == ssid }.count
+            return .init(aps: aps, nearby: nearby, scanned: true,
+                         message: ssid.isEmpty ? "Scan: found \(nearby.count) network(s)" : "Scan: found \(count) access point(s) on “\(ssid)”", ok: true)
         }
 
         var lastErr = ""
         for w in order {
-            guard let net = withB.filter({ canonical($0.bssid!) == w }).max(by: { $0.rssiValue < $1.rssiValue }) else { continue }
+            guard let net = withB.filter({ canonical($0.bssid!) == w && $0.ssid == ssid }).max(by: { $0.rssiValue < $1.rssiValue }) else { continue }
             do {
                 try iface.associate(to: net, password: password.isEmpty ? nil : password)
-                return .init(aps: aps, scanned: true, message: "Connected to \(w) (\(net.rssiValue) dBm)", ok: true)
+                return .init(aps: aps, nearby: nearby, scanned: true, message: "Connected to \(w) (\(net.rssiValue) dBm)", ok: true)
             } catch {
                 lastErr = "Connecting to \(w) failed: \(error.localizedDescription). If this keeps happening, save the Wi-Fi password in Settings."
             }
         }
         let msg = lastErr.isEmpty ? "None of your chosen access points are in range" : lastErr
-        return .init(aps: aps, scanned: true, message: msg, ok: false)
+        return .init(aps: aps, nearby: nearby, scanned: true, message: msg, ok: false)
     }
 }

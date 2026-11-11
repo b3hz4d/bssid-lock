@@ -20,6 +20,8 @@ namespace BSSIDLock
         bool startHidden;
         bool exiting;
         bool updating;
+        bool uiPending;
+        string optionsSignature;
 
         // Header
         StatusBadge badge;
@@ -64,9 +66,9 @@ namespace BSSIDLock
             tray.ExitRequested += ExitApp;
             tray.UpdateRequested += async () => await updater.CheckAsync(userInitiated: true);
 
-            engine.Changed += (s, e) => UpdateUi();
+            engine.Changed += (s, e) => RequestUi();
             engine.NetworkChanged += (t, body) => { if (engine.Settings.NotifyChanges) tray.ShowBalloon(t, body); };
-            updater.Changed += (s, e) => UpdateUi();
+            updater.Changed += (s, e) => RequestUi();
             updater.RestartRequested += RestartInto;
             Theme.Changed += (s, e) => { if (InvokeRequired) BeginInvoke((Action)ApplyTheme); else ApplyTheme(); };
 
@@ -76,7 +78,9 @@ namespace BSSIDLock
                 timer.Interval = Math.Max(3, engine.Settings.IntervalSeconds) * 1000;
                 if (engine.LastScan == null && !engine.Busy) await engine.ScanAsync();   // first run
                 await engine.TickAsync();
+                if (Viewing) await engine.RefreshSignalsAsync(engine.Settings.IntervalSeconds);
             };
+            VisibleChanged += async (s, e) => { if (Viewing) await engine.RefreshSignalsAsync(engine.Settings.IntervalSeconds, staleAfterSeconds: 5); };
             timer.Start();
 
             // React within ~1.5 s when Windows roams or reconnects, instead of waiting for the next periodic check.
@@ -98,6 +102,22 @@ namespace BSSIDLock
 
             ApplyTheme();
             UpdateUi();
+        }
+
+        bool Viewing => Visible && WindowState != FormWindowState.Minimized;
+
+        /// <summary>Coalesce bursts of change notifications into one UI update.</summary>
+        void RequestUi()
+        {
+            if (uiPending || IsDisposed) return;
+            if (!IsHandleCreated) { UpdateUi(); return; }
+            uiPending = true;
+            BeginInvoke((Action)(() => { uiPending = false; UpdateUi(); }));
+        }
+
+        static void SetText(Control c, string text)
+        {
+            if (c.Text != text) c.Text = text;
         }
 
         void OnWifiEvent()
@@ -254,25 +274,30 @@ namespace BSSIDLock
                 var st = engine.Settings;
 
                 badge.State = engine.State;
-                title.Text = engine.Title;
-                detail.Text = engine.Detail;
+                SetText(title, engine.Title);
+                SetText(detail, engine.Detail);
                 lockSwitch.Checked = st.LockEnabled;
 
-                var options = new List<KeyValuePair<string, object>> { new KeyValuePair<string, object>("Any favorite (top first)", null) };
-                options.AddRange(st.Favorites.Select(b => new KeyValuePair<string, object>(engine.Label(b), b)));
-                lockTo.SetOptions(options);
-                lockTo.SelectedValue = st.Target;
+                string optSig = string.Join("|", st.Favorites.Select(engine.Label)) + "#" + st.Target;
+                if (optSig != optionsSignature)
+                {
+                    optionsSignature = optSig;
+                    var options = new List<KeyValuePair<string, object>> { new KeyValuePair<string, object>("Any favorite (top first)", null) };
+                    options.AddRange(st.Favorites.Select(b => new KeyValuePair<string, object>(engine.Label(b), b)));
+                    lockTo.SetOptions(options);
+                    lockTo.SelectedValue = st.Target;
+                }
                 lockTo.Enabled = lockToLabel.Enabled = st.LockEnabled;
                 scanButton.Enabled = !engine.Busy;
-                scanButton.Text = engine.Busy ? "Scanning…" : "Scan";
+                SetText(scanButton, engine.Busy ? "Scanning…" : "Scan");
 
                 UpdateContent();
 
-                footer.Text = engine.LastScan.HasValue
-                    ? "Last scan " + Ago(engine.LastScan.Value) + "  ·  Wi-Fi changes are handled instantly, with a safety check every " + st.IntervalSeconds + " s"
-                    : engine.Busy ? "Scanning…" : "";
+                SetText(footer, engine.LastScan.HasValue
+                    ? "Signals updated " + Ago(engine.LastScan.Value) + "  ·  refreshed every " + st.IntervalSeconds + " s while this window is open"
+                    : engine.Busy ? "Scanning…" : "");
                 updateLink.Visible = updater.Busy || updater.AvailableVersion != null;
-                updateLink.Text = updater.Busy ? updater.Status : updater.AvailableVersion != null ? "Install version " + updater.AvailableVersion : "";
+                SetText(updateLink, updater.Busy ? updater.Status : updater.AvailableVersion != null ? "Install version " + updater.AvailableVersion : "");
 
                 tray.Update();
             }
@@ -498,7 +523,8 @@ namespace BSSIDLock
         static string Ago(DateTime t)
         {
             var d = DateTime.Now - t;
-            if (d.TotalSeconds < 60) return (int)d.TotalSeconds + " s ago";
+            if (d.TotalSeconds < 10) return "just now";
+            if (d.TotalSeconds < 60) return (int)d.TotalSeconds / 5 * 5 + " s ago";
             if (d.TotalMinutes < 60) return (int)d.TotalMinutes + " min ago";
             return "at " + t.ToString("t");
         }

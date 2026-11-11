@@ -27,6 +27,7 @@ namespace BSSIDLock
         string hoverPart;        // "lock", "star", "up", "down", "more" or null
         bool adjusting;
         Font boldFont, smallFont, glyphFont, headerFont;
+        Bitmap buffer;   // one reusable paint buffer instead of a new bitmap per row
 
         public event Action<string> LockClicked, UnlockClicked, FavoriteClicked;
         public event Action<string, int> MoveClicked;
@@ -67,7 +68,7 @@ namespace BSSIDLock
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) DisposeFonts();
+            if (disposing) { DisposeFonts(); buffer?.Dispose(); }
             base.Dispose(disposing);
         }
 
@@ -142,9 +143,15 @@ namespace BSSIDLock
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
 
             // Draw into a buffer: no flicker, and ClearType text on an opaque background.
-            using (var buffer = new Bitmap(bounds.Width, bounds.Height))
+            if (buffer == null || buffer.Width < bounds.Width || buffer.Height < bounds.Height)
+            {
+                int w = Math.Max(bounds.Width, buffer?.Width ?? 0), h = Math.Max(bounds.Height, buffer?.Height ?? 0);
+                buffer?.Dispose();
+                buffer = new Bitmap(w, h);
+            }
             using (var g = Graphics.FromImage(buffer))
             {
+                g.SetClip(new Rectangle(0, 0, bounds.Width, bounds.Height));
                 var local = new Rectangle(0, 0, bounds.Width, bounds.Height);
                 bool isAp = row.Type == ListRow.Kind.AccessPoint;
                 bool selected = isAp && (e.State & DrawItemState.Selected) != 0;
@@ -163,7 +170,7 @@ namespace BSSIDLock
                     case ListRow.Kind.Hint: DrawHint(g, local, row); break;
                     default: DrawAccessPoint(g, local, row, e.Index, selected); break;
                 }
-                e.Graphics.DrawImageUnscaled(buffer, bounds.Location);
+                e.Graphics.DrawImage(buffer, bounds, new Rectangle(0, 0, bounds.Width, bounds.Height), GraphicsUnit.Pixel);
             }
         }
 
@@ -227,6 +234,7 @@ namespace BSSIDLock
             // Detail line
             var parts = new List<string>();
             if (name != null) parts.Add(b);
+            if (ap != null && ap.Ssid.Length > 0 && ap.Ssid != engine.Settings.Ssid) parts.Add("on \u201C" + ap.Ssid + "\u201D");
             if (ap != null)
             {
                 parts.Add(ap.Band + " · channel " + ap.Channel);

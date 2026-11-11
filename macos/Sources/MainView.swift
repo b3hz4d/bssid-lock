@@ -18,12 +18,13 @@ struct MainView: View {
         }
         .frame(minWidth: 640, minHeight: 520)
         // Dock icon while the window is open; AppDelegate removes it again when the window closes.
-        .onAppear { NSApp.setActivationPolicy(.regular) }
+        .onAppear { NSApp.setActivationPolicy(.regular); e.setViewing(window: true) }
+        .onDisappear { e.setViewing(window: false) }
         .sheet(isPresented: $ui.showSettings) {
             SettingsSheet().environmentObject(e).environmentObject(ui).environmentObject(updater)
         }
         .sheet(isPresented: $ui.showActivity) {
-            ActivitySheet().environmentObject(e).environmentObject(ui)
+            ActivitySheet(activity: e.activity).environmentObject(e).environmentObject(ui)
         }
         .alert("Name this access point", isPresented: renameBinding) {
             TextField("e.g. Living room", text: $ui.renameText)
@@ -342,6 +343,7 @@ struct APRow: View {
     private func detail(name: String?) -> String {
         var parts: [String] = []
         if name != nil { parts.append(item.bssid) }
+        if let ap = item.ap, !ap.ssid.isEmpty, ap.ssid != e.ssid { parts.append("on “\(ap.ssid)”") }
         if let ap = item.ap {
             parts.append("\(ap.band) · channel \(ap.channel)")
             parts.append("\(SignalQuality(rssi: ap.rssi).label) (\(ap.rssi) dBm)")
@@ -355,13 +357,21 @@ struct APRow: View {
 struct FooterBar: View {
     @EnvironmentObject var e: Engine
 
+    static func ago(_ t: Date, now: Date) -> String {
+        let s = Int(now.timeIntervalSince(t))
+        return s < 10 ? "just now" : s < 60 ? "\(s / 5 * 5) s ago" : "\(s / 60) min ago"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             if e.busy {
                 ProgressView().controlSize(.small)
-                Text("Working…")
+                Text("Scanning…")
             } else if let t = e.lastScan {
-                Text("Last scan \(t, style: .relative) ago")
+                // Redraw a few times a minute, not every second.
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    Text("Signals updated \(Self.ago(t, now: context.date))")
+                }
             } else {
                 Text("Not scanned yet")
             }

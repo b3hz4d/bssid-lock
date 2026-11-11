@@ -130,7 +130,8 @@ namespace BSSIDLock
         {
             if (icons.TryGetValue(engine.State, out var ic) && icon.Icon != ic) icon.Icon = ic;
             string tip = "BSSIDLock: " + engine.Title;
-            icon.Text = tip.Length <= 63 ? tip : tip.Substring(0, 62) + "…";
+            tip = tip.Length <= 63 ? tip : tip.Substring(0, 62) + "…";
+            if (icon.Text != tip) icon.Text = tip;
         }
 
         // ---------------------------------------------------------------- icons

@@ -108,49 +108,86 @@ namespace BSSIDLock.Native
             public uint dwFlags;
         }
 
-        /// <summary>An open WLAN client handle plus the Wi-Fi interface to use.</summary>
+        // One long-lived client handle, reused by every call (opening one each time costs a service round trip).
+        // Calls are serialized; the multi-second scan wait happens outside the lock.
+        static readonly object gate = new object();
+        static IntPtr shared = IntPtr.Zero;
+
+        static IntPtr SharedHandle()
+        {
+            if (shared != IntPtr.Zero) return shared;
+            int rc;
+            IntPtr handle;
+            try { rc = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out handle); }
+            catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException)
+            {
+                // wlanapi.dll is missing on PCs without the Wireless LAN service (e.g. some Windows Server editions).
+                throw new WlanException("Wi-Fi isn't available on this PC (the Wireless LAN service isn't installed).");
+            }
+            if (rc == ErrorServiceNotActive)
+                throw new WlanException("The Wi-Fi service (WLAN AutoConfig) isn't running. Turn on Wi-Fi, or start the service in services.msc.");
+            if (rc != 0) throw new WlanException("Opening the Wi-Fi service", rc);
+            shared = handle;
+            return handle;
+        }
+
+        static void ResetShared()
+        {
+            if (shared == IntPtr.Zero) return;
+            WlanCloseHandle(shared, IntPtr.Zero);
+            shared = IntPtr.Zero;
+        }
+
+        /// <summary>Exclusive use of the shared client handle plus the Wi-Fi interface to use.</summary>
         sealed class Session : IDisposable
         {
             public readonly IntPtr Handle;
             public Guid Interface;
             public readonly bool Connected;
+            bool released;
 
             public Session()
             {
-                int rc;
-                try { rc = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out Handle); }
-                catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException)
-                {
-                    // wlanapi.dll is missing on PCs without the Wireless LAN service (e.g. some Windows Server editions).
-                    throw new WlanException("Wi-Fi isn't available on this PC (the Wireless LAN service isn't installed).");
-                }
-                if (rc == ErrorServiceNotActive)
-                    throw new WlanException("The Wi-Fi service (WLAN AutoConfig) isn't running. Turn on Wi-Fi, or start the service in services.msc.");
-                if (rc != 0) throw new WlanException("Opening the Wi-Fi service", rc);
-
-                rc = WlanEnumInterfaces(Handle, IntPtr.Zero, out IntPtr list);
-                if (rc != 0) { WlanCloseHandle(Handle, IntPtr.Zero); throw new WlanException("Listing Wi-Fi adapters", rc); }
+                Monitor.Enter(gate);
                 try
                 {
-                    int count = Marshal.ReadInt32(list, 0);
-                    if (count == 0) { WlanCloseHandle(Handle, IntPtr.Zero); throw new WlanException("No Wi-Fi adapter found."); }
-                    for (int i = 0; i < count; i++)
+                    Handle = SharedHandle();
+                    int rc = WlanEnumInterfaces(Handle, IntPtr.Zero, out IntPtr list);
+                    if (rc != 0) { ResetShared(); throw new WlanException("Listing Wi-Fi adapters", rc); }
+                    try
                     {
-                        IntPtr item = list + 8 + i * InterfaceInfoSize;
-                        var guid = (Guid)Marshal.PtrToStructure(item, typeof(Guid));
-                        int state = Marshal.ReadInt32(item, 16 + 512);
-                        // Prefer the first connected adapter, otherwise the first adapter.
-                        if (i == 0 || (state == WlanInterfaceStateConnected && !Connected))
+                        int count = Marshal.ReadInt32(list, 0);
+                        if (count == 0) throw new WlanException("No Wi-Fi adapter found.");
+                        for (int i = 0; i < count; i++)
                         {
-                            Interface = guid;
-                            Connected = state == WlanInterfaceStateConnected;
+                            IntPtr item = list + 8 + i * InterfaceInfoSize;
+                            var guid = (Guid)Marshal.PtrToStructure(item, typeof(Guid));
+                            int state = Marshal.ReadInt32(item, 16 + 512);
+                            // Prefer the first connected adapter, otherwise the first adapter.
+                            if (i == 0 || (state == WlanInterfaceStateConnected && !Connected))
+                            {
+                                Interface = guid;
+                                Connected = state == WlanInterfaceStateConnected;
+                            }
                         }
                     }
+                    finally { WlanFreeMemory(list); }
                 }
-                finally { WlanFreeMemory(list); }
+                catch
+                {
+                    Release();
+                    throw;
+                }
             }
 
-            public void Dispose() => WlanCloseHandle(Handle, IntPtr.Zero);
+            void Release()
+            {
+                if (released) return;
+                released = true;
+                Monitor.Exit(gate);
+            }
+
+            public void Dispose() => Release();
         }
 
         /// <summary>The current Wi-Fi connection, or null when not connected.</summary>
@@ -188,17 +225,19 @@ namespace BSSIDLock.Native
         /// <summary>All access points Windows knows about, optionally after a fresh scan (takes ~4 s).</summary>
         public static List<BssEntry> GetAccessPoints(bool scanFirst)
         {
+            if (scanFirst)
+            {
+                int src;
+                ScanDone.Reset();
+                using (var scan = new Session())
+                    src = WlanScan(scan.Handle, ref scan.Interface, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (src == WlanException.ErrorAccessDenied) throw new WlanException("Scanning", src);
+                // Wait until Windows reports the scan finished (usually 1-3 s), or at most 4 s without notifications.
+                if (src == 0) ScanDone.WaitOne(monitorHandle != IntPtr.Zero ? 5000 : 4000);
+            }
+
             using (var s = new Session())
             {
-                if (scanFirst)
-                {
-                    ScanDone.Reset();
-                    int src = WlanScan(s.Handle, ref s.Interface, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                    if (src == WlanException.ErrorAccessDenied) throw new WlanException("Scanning", src);
-                    // Wait until Windows reports the scan finished (usually 1-3 s), or at most 4 s without notifications.
-                    if (src == 0) ScanDone.WaitOne(monitorHandle != IntPtr.Zero ? 5000 : 4000);
-                }
-
                 int rc = WlanGetNetworkBssList(s.Handle, ref s.Interface, IntPtr.Zero, Dot11BssTypeInfrastructure,
                     false, IntPtr.Zero, out IntPtr list);
                 if (rc != 0) throw new WlanException("Reading access points", rc);

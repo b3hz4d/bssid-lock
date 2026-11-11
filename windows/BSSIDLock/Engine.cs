@@ -48,7 +48,8 @@ namespace BSSIDLock
         public List<string> Log { get; } = new List<string>();
 
         DateTime retryAfter = DateTime.MinValue;
-        bool ticking;
+        DateTime lastActiveScan = DateTime.MinValue;
+        bool ticking, refreshing;
         (string Ssid, string Bssid)? announced;
         bool changeCheckPending;
         DateTime lastSwitchByUs = DateTime.MinValue;
@@ -249,7 +250,8 @@ namespace BSSIDLock
                 .Select(g => new NetworkSummary { Ssid = g.Key, Rssi = g.Max(a => a.Rssi), Count = g.Select(a => a.Bssid).Distinct().Count() })
                 .OrderByDescending(n => n.Rssi)
                 .ToList();
-            Visible = all.Where(a => a.Ssid == Settings.Ssid)
+            // The managed network's access points, plus favorites on any network (e.g. a separate 5 GHz name).
+            Visible = all.Where(a => a.Ssid == Settings.Ssid || Settings.Favorites.Contains(a.Bssid))
                 .GroupBy(a => a.Bssid)
                 .Select(g => g.OrderByDescending(a => a.Rssi).First())
                 .OrderByDescending(a => a.Rssi)
@@ -266,6 +268,7 @@ namespace BSSIDLock
             try
             {
                 var all = await Task.Run(() => Wlan.GetAccessPoints(scanFirst: true));
+                lastActiveScan = DateTime.Now;
                 AccessDenied = false;
                 LastError = null;
                 ApplyScan(all);
@@ -282,6 +285,30 @@ namespace BSSIDLock
                 await RefreshAsync();
                 UpdateStatusOnly();
             }
+        }
+
+        /// <summary>
+        /// While the window is open: refresh signal strengths once per interval from Windows' cached results
+        /// (no radio scan), with a real scan at most every 30 s. Quiet: no log lines, no "Scanning…" state.
+        /// </summary>
+        public async Task RefreshSignalsAsync(int intervalSeconds, int staleAfterSeconds = -1)
+        {
+            if (Busy || refreshing || AccessDenied) return;
+            double age = LastScan.HasValue ? (DateTime.Now - LastScan.Value).TotalSeconds : double.MaxValue;
+            if (age < (staleAfterSeconds >= 0 ? staleAfterSeconds : Math.Max(3, intervalSeconds) - 0.5)) return;
+            bool active = (DateTime.Now - lastActiveScan).TotalSeconds >= Math.Max(30, intervalSeconds);
+            refreshing = true;
+            try
+            {
+                var all = await Task.Run(() => Wlan.GetAccessPoints(scanFirst: active));
+                if (active) lastActiveScan = DateTime.Now;
+                AccessDenied = false;
+                LastError = null;
+                ApplyScan(all);
+            }
+            catch (WlanException ex) { NoteError(ex); }
+            finally { refreshing = false; }
+            UpdateStatusOnly();
         }
 
         async Task<bool> ConnectAsync(IReadOnlyList<string> order)

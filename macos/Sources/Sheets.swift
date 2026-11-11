@@ -207,6 +207,7 @@ struct SettingsSheet: View {
 struct ActivitySheet: View {
     @EnvironmentObject var e: Engine
     @EnvironmentObject var ui: UIState
+    @ObservedObject var activity: ActivityLog
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -215,17 +216,17 @@ struct ActivitySheet: View {
                 Spacer()
                 Button("Copy All") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(e.log.joined(separator: "\n"), forType: .string)
+                    NSPasteboard.general.setString(activity.lines.joined(separator: "\n"), forType: .string)
                 }
-                .disabled(e.log.isEmpty)
+                .disabled(activity.lines.isEmpty)
                 Button("Done") { ui.showActivity = false }
                     .keyboardShortcut(.defaultAction)
             }
-            if e.log.isEmpty {
+            if activity.lines.isEmpty {
                 Text("Nothing yet.").foregroundStyle(.secondary)
                 Spacer()
             } else {
-                List(Array(e.log.reversed().enumerated()), id: \.offset) { _, line in
+                List(Array(activity.lines.reversed().enumerated()), id: \.offset) { _, line in
                     Text(line)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
