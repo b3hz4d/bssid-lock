@@ -31,7 +31,8 @@ RC=$(find "$TMP" -name rcodesign -type f -perm -u+x | head -1)
 CERT_SHA1=$(/usr/bin/openssl pkcs12 -in "$SELFSIGN_P12" -passin env:SELFSIGN_PASSWORD -nokeys -clcerts 2>/dev/null \
   | /usr/bin/openssl x509 -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
 [[ -n "$CERT_SHA1" ]] || { echo "Couldn't read the certificate from $SELFSIGN_P12" >&2; exit 1; }
-csreq -r "=designated => identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\"" -b "$TMP/requirements.bin"
+# rcodesign wants a single requirement expression (blob 0xfade0c00), not a "designated => …" set.
+csreq -r "=identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\"" -b "$TMP/requirements.bin"
 
 printf '%s' "$SELFSIGN_PASSWORD" > "$TMP/pw"
 "$RC" sign --p12-file "$SELFSIGN_P12" --p12-password-file "$TMP/pw" \
