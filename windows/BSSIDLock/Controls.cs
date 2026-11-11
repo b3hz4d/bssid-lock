@@ -790,14 +790,29 @@ namespace BSSIDLock
 
         public TitleBlock()
         {
+            // Not AutoSize: it sets its own height for the width it's given (layout engines sometimes
+            // ask for a preferred size at a tiny width, which would make wrapped text absurdly tall).
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            AutoSize = true;
         }
 
         public string Title { get => Text; set { if (Text != value) { Text = value; Changed(); } } }
         public string Detail { get => detail; set { value = value ?? ""; if (detail != value) { detail = value; Changed(); } } }
 
-        void Changed() { Parent?.PerformLayout(); Invalidate(); }
+        void Changed() { FitHeight(); Invalidate(); }
+
+        int Desired(int width) => TitleFont.Height + Ui.S(this, 4) + DetailHeight(Math.Max(width, Ui.S(this, 160)));
+
+        void FitHeight()
+        {
+            int h = Desired(Width);
+            if (Height != h) Height = h;
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            FitHeight();
+        }
 
         Font TitleFont => titleFont ?? (titleFont = new Font("Segoe UI Semibold", Font.Size + 5.5f));
         protected override void OnFontChanged(EventArgs e) { titleFont?.Dispose(); titleFont = null; base.OnFontChanged(e); }
@@ -806,8 +821,8 @@ namespace BSSIDLock
 
         public override Size GetPreferredSize(Size proposedSize)
         {
-            int w = proposedSize.Width > 0 ? proposedSize.Width : Math.Max(Width, Ui.S(this, 300));
-            return new Size(w, TitleFont.Height + Ui.S(this, 4) + DetailHeight(w));
+            int w = proposedSize.Width >= Ui.S(this, 160) && proposedSize.Width < 100000 ? proposedSize.Width : Math.Max(Width, Ui.S(this, 300));
+            return new Size(w, Desired(w));
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -815,7 +830,7 @@ namespace BSSIDLock
             var g = e.Graphics;
             g.Clear(Ui.Back(this));
             int th = TitleFont.Height;
-            int top = Math.Max(0, (Height - th - Ui.S(this, 4) - DetailHeight(Width)) / 2);
+            int top = 0;
             TextRenderer.DrawText(g, Text, TitleFont, new Rectangle(0, top, Width, th), Theme.Text, Ui.Left);
             if (detail.Length > 0)
                 TextRenderer.DrawText(g, detail, Font, new Rectangle(0, top + th + Ui.S(this, 4), Width, DetailHeight(Width)), Theme.Subtle, WrapFlags);

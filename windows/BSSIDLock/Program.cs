@@ -47,6 +47,7 @@ namespace BSSIDLock
                 var engine = new Engine(settings);
                 bool minimized = args.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase));
                 var form = new MainForm(engine, startHidden: minimized, justUpdated: updatedFrom > 0);
+                if (args.Contains("--open-settings")) form.Shown += (s, e) => form.BeginInvoke((Action)form.OpenSettingsFromCommandLine);
 
                 var listener = new Thread(() =>
                 {

@@ -163,7 +163,7 @@ namespace BSSIDLock
 
             badge = new StatusBadge { Size = new Size(54, 54), Margin = new Padding(0, 0, 16, 0), Anchor = AnchorStyles.Left };
 
-            heading = new TitleBlock { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            heading = new TitleBlock { Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0) };
 
             lockSwitch = new ToggleSwitch { Text = "Lock", Font = new Font("Segoe UI Semibold", 11F), Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
             lockSwitch.CheckedChanged += (s, e) => { if (!updating) engine.SetLockEnabled(lockSwitch.Checked); };
@@ -439,6 +439,9 @@ namespace BSSIDLock
         {
             using (var f = new ActivityForm(engine)) f.ShowDialog(this);
         }
+
+        /// <summary>"--open-settings" (used by the screenshot test in CI).</summary>
+        public void OpenSettingsFromCommandLine() => OpenSettings();
 
         void OpenSettings()
         {

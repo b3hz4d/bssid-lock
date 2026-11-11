@@ -119,3 +119,48 @@ jobs:
           if (Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\BSSIDLock')) { throw 'install folder still there' }
           if (Get-Process BSSIDLock -ErrorAction SilentlyContinue) { throw 'BSSIDLock still running' }
           Write-Host 'OK: removed'
+
+  windows-screenshots:
+    name: Windows screenshots (light and dark)
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: BSSIDLock-Windows
+          path: app
+
+      - name: Capture main window and Settings
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          New-Item -ItemType Directory -Force shots | Out-Null
+          $exe = (Resolve-Path app/BSSIDLock.exe).Path
+          $settingsDir = Join-Path $env:APPDATA 'BSSIDLock'
+          New-Item -ItemType Directory -Force $settingsDir | Out-Null
+          function Shot($name) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save((Join-Path (Resolve-Path shots) "$name.png"))
+            $g.Dispose(); $bmp.Dispose()
+          }
+          foreach ($theme in 'dark', 'light') {
+            '{"Ssid":"","Favorites":[],"Target":null,"LockEnabled":true,"IntervalSeconds":10,"Names":{},"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":true}' |
+              Set-Content (Join-Path $settingsDir 'settings.json') -Encoding UTF8
+            foreach ($mode in 'main', 'settings') {
+              $args = if ($mode -eq 'settings') { '--open-settings' } else { '' }
+              $p = Start-Process $exe -ArgumentList $args -PassThru
+              Start-Sleep -Seconds 8
+              Shot "$mode-$theme"
+              Stop-Process -Id $p.Id -Force
+              Start-Sleep -Seconds 1
+            }
+          }
+          Get-ChildItem shots
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Windows-screenshots
+          path: shots
