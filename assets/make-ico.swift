@@ -47,7 +47,7 @@ func dib(_ rep: NSBitmapImageRep) -> [UInt8] {
     return out
 }
 
-let sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+let sizes = [16, 20, 24, 32, 40, 48, 64, 256]   // Windows scales 256 down for anything in between
 var images: [[UInt8]] = []
 for s in sizes {
     let rep = render(s)

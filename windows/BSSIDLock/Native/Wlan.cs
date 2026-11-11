@@ -56,6 +56,12 @@ namespace BSSIDLock.Native
         const int ErrorInvalidState = 5023;               // not connected
         const int ErrorServiceNotActive = 1062;           // WLAN AutoConfig service stopped
 
+        // Notification sources and codes (wlanapi.h: WLAN_NOTIFICATION_ACM / WLAN_NOTIFICATION_MSM)
+        const uint NotificationSourceAcm = 0x08;
+        const uint NotificationSourceMsm = 0x10;
+        const int AcmScanComplete = 7, AcmScanFail = 8, AcmConnectionComplete = 10, AcmDisconnected = 21;
+        const int MsmConnected = 4, MsmRoamingEnd = 6, MsmDisconnected = 10;
+
         const int InterfaceInfoSize = 16 + 512 + 4;       // GUID + WCHAR[256] + state
         const int BssEntrySize = 360;                     // sizeof(WLAN_BSS_ENTRY)
 
@@ -84,6 +90,12 @@ namespace BSSIDLock.Native
 
         [DllImport("wlanapi.dll")]
         static extern void WlanFreeMemory(IntPtr pMemory);
+
+        delegate void WlanNotificationCallback(IntPtr data, IntPtr context);
+
+        [DllImport("wlanapi.dll")]
+        static extern int WlanRegisterNotification(IntPtr hClientHandle, uint dwNotifSource, [MarshalAs(UnmanagedType.Bool)] bool bIgnoreDuplicate,
+            WlanNotificationCallback funcCallback, IntPtr pCallbackContext, IntPtr pReserved, out uint pdwPrevNotifSource);
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct WlanConnectionParameters
@@ -180,9 +192,11 @@ namespace BSSIDLock.Native
             {
                 if (scanFirst)
                 {
+                    ScanDone.Reset();
                     int src = WlanScan(s.Handle, ref s.Interface, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
                     if (src == WlanException.ErrorAccessDenied) throw new WlanException("Scanning", src);
-                    if (src == 0) Thread.Sleep(4000);   // Windows needs a few seconds to collect results
+                    // Wait until Windows reports the scan finished (usually 1-3 s), or at most 4 s without notifications.
+                    if (src == 0) ScanDone.WaitOne(monitorHandle != IntPtr.Zero ? 5000 : 4000);
                 }
 
                 int rc = WlanGetNetworkBssList(s.Handle, ref s.Interface, IntPtr.Zero, Dot11BssTypeInfrastructure,
@@ -251,6 +265,61 @@ namespace BSSIDLock.Native
                 }
             }
             finally { Marshal.FreeHGlobal(list); }
+        }
+
+        // ---- Change notifications ----
+
+        static readonly AutoResetEvent ScanDone = new AutoResetEvent(false);
+        static IntPtr monitorHandle;
+        static WlanNotificationCallback callback;   // kept in a field so the GC can't collect it while Windows holds it
+
+        /// <summary>Raised (on a Wi-Fi service thread) when the connection changes: connected, roamed or disconnected.</summary>
+        public static event Action ConnectionChanged;
+
+        /// <summary>Start listening for Wi-Fi events. Returns false if notifications aren't available.</summary>
+        public static bool StartMonitoring()
+        {
+            if (monitorHandle != IntPtr.Zero) return true;
+            try
+            {
+                if (WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out IntPtr handle) != 0) return false;
+                callback = OnNotification;
+                if (WlanRegisterNotification(handle, NotificationSourceAcm | NotificationSourceMsm, true, callback,
+                        IntPtr.Zero, IntPtr.Zero, out _) != 0)
+                {
+                    WlanCloseHandle(handle, IntPtr.Zero);
+                    return false;
+                }
+                monitorHandle = handle;
+                return true;
+            }
+            catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        public static void StopMonitoring()
+        {
+            if (monitorHandle == IntPtr.Zero) return;
+            WlanCloseHandle(monitorHandle, IntPtr.Zero);   // also unregisters the callback
+            monitorHandle = IntPtr.Zero;
+        }
+
+        static void OnNotification(IntPtr data, IntPtr context)
+        {
+            try
+            {
+                // WLAN_NOTIFICATION_DATA: NotificationSource(0) NotificationCode(4) InterfaceGuid(8) dwDataSize(24) pData
+                uint source = (uint)Marshal.ReadInt32(data, 0);
+                int code = Marshal.ReadInt32(data, 4);
+                if (source == NotificationSourceAcm && (code == AcmScanComplete || code == AcmScanFail))
+                    ScanDone.Set();
+                else if ((source == NotificationSourceAcm && (code == AcmConnectionComplete || code == AcmDisconnected)) ||
+                         (source == NotificationSourceMsm && (code == MsmConnected || code == MsmRoamingEnd || code == MsmDisconnected)))
+                    ConnectionChanged?.Invoke();
+            }
+            catch (Exception) { /* never let an exception escape into native code */ }
         }
 
         static string ReadSsid(IntPtr p, int offset)

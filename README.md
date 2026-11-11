@@ -112,16 +112,20 @@ open macos/build/BSSIDLock.app
 
 ## How it works
 
-Every few seconds (10 by default), BSSIDLock reads which network and access point you're on. If you're on your chosen network but not on an allowed access point, it scans and asks the system to join the specific access point you picked:
+BSSIDLock listens for the system's Wi-Fi change events: connected, roamed and disconnected. When you're on your chosen network but not on an allowed access point, it asks the system to join the specific access point you picked:
 
-- **macOS:** CoreWLAN, `CWInterface.associate(to:password:)` with the scanned network for that BSSID.
-- **Windows:** Native Wi-Fi API, `WlanConnect` with your saved Wi-Fi profile and a one-entry desired-BSSID list.
+- **macOS:** CoreWLAN. It watches `CWEventType.bssidDidChange` and friends, then calls `CWInterface.associate(to:password:)` with the scanned network for that BSSID.
+- **Windows:** Native Wi-Fi API. It registers with `WlanRegisterNotification`, then calls `WlanConnect` with your saved Wi-Fi profile and a one-entry desired-BSSID list.
 
-If none of your choices is in range, it waits 60 seconds before trying again, so it doesn't keep scanning and slowing your connection.
+**Speed and battery:**
+- It reacts within about 1.5 seconds of a roam, without constant polling. A light check every few seconds (10 by default) is only a safety net.
+- If the access point was seen in a scan during the last 30 seconds, it switches right away without scanning again.
+- If none of your choices is in range, it waits 60 seconds before trying again, so it doesn't keep scanning and slowing your connection.
+- The apps are small: about 1.2 MB on macOS (universal) and 150 KB on Windows.
 
 ## Limitations
 
-- **The system can still roam in between checks.** BSSIDLock moves you back on the next check, so lower the interval for a tighter lock.
+- **The system may roam briefly** before BSSIDLock moves you back, usually within a couple of seconds.
 - **Location permission is required** on macOS and on Windows 11 24H2 and later. Without it, access points can't be told apart.
 - **Windows needs the network saved.** Connect to it normally once first. BSSIDLock reuses the saved profile and never asks for the password.
 - **Some Wi-Fi drivers ignore the access point request.** Check the Activity log if switching doesn't stick.

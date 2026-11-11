@@ -141,10 +141,30 @@ enum LockState {
     }
 }
 
+/// Recently scanned networks, so switching right after a scan doesn't need another 2–4 s scan.
+/// Accessed only from the detached CoreWLAN work, guarded by a lock.
+final class NetworkCache: @unchecked Sendable {
+    static let shared = NetworkCache()
+    private let lock = NSLock()
+    private var entries: [String: (net: CWNetwork, ssid: String, time: Date)] = [:]
+
+    func store(_ nets: [CWNetwork], ssid: String) {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        for n in nets { if let b = n.bssid { entries[canonical(b)] = (n, ssid, now) } }
+    }
+
+    func lookup(bssid: String, ssid: String, maxAge: TimeInterval) -> CWNetwork? {
+        lock.lock(); defer { lock.unlock() }
+        guard let e = entries[bssid], e.ssid == ssid, Date().timeIntervalSince(e.time) <= maxAge else { return nil }
+        return e.net
+    }
+}
+
 // MARK: - Engine
 
 @MainActor
-final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
+final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEventDelegate {
     private let defaults = UserDefaults.standard
 
     // Settings (persisted)
@@ -208,6 +228,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private let lm = CLLocationManager()
     private var retryAfter = Date.distantPast
+    private var pendingCheck: Task<Void, Never>?
     private static let retryBackoff: TimeInterval = 60
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
@@ -233,7 +254,34 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
             lm.requestWhenInUseAuthorization()
             lm.requestLocation()   // one-shot; makes sure the permission prompt appears
         }
+
+        // React the moment macOS roams or reconnects, instead of waiting for the next periodic check.
+        let client = CWWiFiClient.shared()
+        client.delegate = self
+        for event in [CWEventType.ssidDidChange, .bssidDidChange, .linkDidChange] {
+            try? client.startMonitoringEvent(with: event)
+        }
         Task { await loop() }
+    }
+
+    // MARK: Wi-Fi events (delivered on a CoreWLAN queue)
+
+    nonisolated func ssidDidChangeForWiFiInterface(withName interfaceName: String) { wifiChanged() }
+    nonisolated func bssidDidChangeForWiFiInterface(withName interfaceName: String) { wifiChanged() }
+    nonisolated func linkDidChangeForWiFiInterface(withName interfaceName: String) { wifiChanged() }
+
+    nonisolated private func wifiChanged() {
+        Task { @MainActor in self.scheduleCheck() }
+    }
+
+    /// Check soon, coalescing bursts of events (a roam fires several) into one check.
+    private func scheduleCheck(after seconds: Double = 1.5) {
+        pendingCheck?.cancel()
+        pendingCheck = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            await self?.tick()
+        }
     }
 
     // MARK: Location
@@ -314,11 +362,15 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
         if log.count > 300 { log.removeFirst(log.count - 300) }
     }
 
+    /// Read the current connection. Only publishes real changes, so SwiftUI doesn't redraw for nothing.
     func refresh() {
         let i = CWWiFiClient.shared().interface()
-        currentSSID = i?.ssid()
-        currentBSSID = i?.bssid().map(canonical)
-        currentRSSI = i?.rssiValue() ?? 0
+        let s = i?.ssid()
+        let b = i?.bssid().map(canonical)
+        let r = i?.rssiValue() ?? 0
+        if currentSSID != s { currentSSID = s }
+        if currentBSSID != b { currentBSSID = b }
+        if abs(currentRSSI - r) >= 3 || (currentRSSI == 0) != (r == 0) { currentRSSI = r }   // ignore ±2 dBm jitter
     }
 
     /// First run: if no network is configured yet, use the one the Mac is on now.
@@ -344,9 +396,11 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
     var wanted: [String] { target.map { [$0] } ?? favorites }
 
     private func setStatus(_ s: LockState, _ title: String, _ detail: String) {
-        state = s
-        statusTitle = title
-        statusDetail = detail
+        if state != s { state = s }
+        if statusTitle != title { statusTitle = title }
+        if statusDetail != detail { statusDetail = detail }
+        let locked = s == .locked
+        if isLocked != locked { isLocked = locked }
     }
 
     /// One line describing the current connection.
@@ -362,7 +416,6 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
     func tick() async {
         refresh()
         guard !busy else { return }
-        isLocked = false
         guard lockEnabled else {
             setStatus(.off, "Lock is off", "macOS picks the access point. " + connectionDetail); return
         }
@@ -385,7 +438,6 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
             setStatus(.attention, "Can't read the access point", "Check Location access for BSSIDLock."); return
         }
         if wanted.contains(b) {
-            isLocked = true
             setStatus(.locked, "Locked to \(label(for: b))", connectionDetail)
             return
         }
@@ -416,7 +468,6 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
         addLog(r.message)
         refresh()
         if let b = currentBSSID, wanted.contains(b) {
-            isLocked = true
             setStatus(.locked, "Locked to \(label(for: b))", connectionDetail)
         }
         return r.ok
@@ -491,11 +542,19 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard let iface = CWWiFiClient.shared().interface() else {
             return .init(aps: [], scanned: false, message: "No Wi-Fi interface", ok: false)
         }
+        // Fast path: the top choice was seen in the last 30 s, so join it straight away (no new scan).
+        if associate, let first = order.first,
+           let cached = NetworkCache.shared.lookup(bssid: first, ssid: ssid, maxAge: 30),
+           (try? iface.associate(to: cached, password: password.isEmpty ? nil : password)) != nil {
+            return .init(aps: [], scanned: false, message: "Connected to \(first) (\(cached.rssiValue) dBm)", ok: true)
+        }
+
         let nets: Set<CWNetwork>
         do { nets = try iface.scanForNetworks(withSSID: ssid.data(using: .utf8)) }
         catch { return .init(aps: [], scanned: false, message: "Scan failed: \(error.localizedDescription)", ok: false) }
 
         let withB = nets.filter { $0.bssid != nil }
+        NetworkCache.shared.store(Array(withB), ssid: ssid)
         if withB.isEmpty {
             if nets.isEmpty { return .init(aps: [], scanned: true, message: "Scan: no “\(ssid)” access points in range", ok: false) }
             return .init(aps: [], scanned: false, message: "Scan: access point addresses hidden (Location access needed)", ok: false)

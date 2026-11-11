@@ -15,12 +15,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 ARCHS=(${=ARCHS:-arm64 x86_64})
 BINS=()
 for arch in $ARCHS; do
-  swiftc Sources/*.swift -parse-as-library -swift-version 5 -O \
-    -target "$arch-apple-macos13.0" -o "build/BSSIDLock-$arch"
+  swiftc Sources/*.swift -parse-as-library -swift-version 5 -O -wmo \
+    -Xlinker -dead_strip -target "$arch-apple-macos13.0" -o "build/BSSIDLock-$arch" 2> >(grep -v libswiftCompatibilityPacks >&2)
   BINS+=("build/BSSIDLock-$arch")
 done
 lipo -create $BINS -output "$APP/Contents/MacOS/BSSIDLock"
 rm -f $BINS
+strip -x "$APP/Contents/MacOS/BSSIDLock"   # drop local symbols; must happen before signing
 
 cp Info.plist "$APP/Contents/Info.plist"
 

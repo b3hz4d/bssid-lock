@@ -223,7 +223,9 @@ namespace BSSIDLock
             {
                 string profile = Current != null && Current.Ssid == Settings.Ssid && !string.IsNullOrEmpty(Current.ProfileName)
                     ? Current.ProfileName : Settings.Ssid;
-                ApplyScan(await Task.Run(() => Wlan.GetAccessPoints(scanFirst: true)));
+                // Skip the scan when the top choice was seen in the last 30 s (switching then starts immediately).
+                bool fresh = LastScan.HasValue && (DateTime.Now - LastScan.Value).TotalSeconds < 30 && order.Count > 0 && Find(order[0]) != null;
+                if (!fresh) ApplyScan(await Task.Run(() => Wlan.GetAccessPoints(scanFirst: true)));
 
                 bool anyInRange = false;
                 foreach (var b in order)
@@ -234,9 +236,9 @@ namespace BSSIDLock
                     try
                     {
                         await Task.Run(() => Wlan.ConnectToAccessPoint(profile, b));
-                        for (int i = 0; i < 12; i++)   // wait up to ~12 s for Windows to switch
+                        for (int i = 0; i < 24; i++)   // wait up to ~12 s for Windows to switch
                         {
-                            await Task.Delay(1000);
+                            await Task.Delay(500);
                             await RefreshAsync();
                             if (Current != null && Current.Bssid == b) break;
                         }

@@ -2,24 +2,39 @@
 using System;
 using System.Drawing;
 using System.Linq;
-using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace BSSIDLock
 {
     static class AppIcon
     {
-        /// <summary>The embedded multi-size icon at the requested size (scaled for the current DPI).</summary>
-        public static Icon Load(int size)
-        {
-            int px = (int)Math.Round(size * DpiScale());
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("BSSIDLock.ico"))
-                return s != null ? new Icon(s, px, px) : SystemIcons.Application;
-        }
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
 
-        static float DpiScale()
+        [DllImport("user32.dll")]
+        static extern bool DestroyIcon(IntPtr handle);
+
+        /// <summary>
+        /// The app icon from the exe's own icon resource, at the system's small (tray) or large (window) size.
+        /// Reading it from the exe means the icon is stored only once in the file.
+        /// </summary>
+        public static Icon Load(bool small)
         {
-            using (var g = Graphics.FromHwnd(IntPtr.Zero)) return g.DpiX / 96f;
+            var large = new IntPtr[1];
+            var smallIcons = new IntPtr[1];
+            try
+            {
+                if (ExtractIconEx(Application.ExecutablePath, 0, large, smallIcons, 1) == 0) return SystemIcons.Application;
+                IntPtr handle = small ? smallIcons[0] : large[0];
+                if (handle == IntPtr.Zero) return SystemIcons.Application;
+                using (var temp = Icon.FromHandle(handle)) return (Icon)temp.Clone();   // Clone copies, so we can free the handle
+            }
+            finally
+            {
+                if (large[0] != IntPtr.Zero) DestroyIcon(large[0]);
+                if (smallIcons[0] != IntPtr.Zero) DestroyIcon(smallIcons[0]);
+            }
         }
     }
 

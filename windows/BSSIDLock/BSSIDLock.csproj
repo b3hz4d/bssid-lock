@@ -46,10 +46,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="BSSIDLock.ico" LogicalName="BSSIDLock.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- Lets non-Windows machines compile against .NET Framework. Build-time only; nothing ships with the app. -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>

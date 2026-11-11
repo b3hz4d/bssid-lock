@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using BSSIDLock.Native;
 
 namespace BSSIDLock
 {
@@ -13,6 +14,8 @@ namespace BSSIDLock
         readonly Engine engine;
         readonly NotifyIcon tray;
         readonly Timer timer;
+        readonly Timer eventDebounce;
+        string listSignature;
         bool startHidden;
         bool exiting;
         bool updating;
@@ -50,7 +53,7 @@ namespace BSSIDLock
             AutoScaleMode = AutoScaleMode.Dpi;
             Font = new Font("Segoe UI", 9F);
             Text = "BSSIDLock";
-            Icon = AppIcon.Load(32);
+            Icon = AppIcon.Load(small: false);
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(820, 560);
             MinimumSize = new Size(680, 460);
@@ -59,7 +62,7 @@ namespace BSSIDLock
             ResumeLayout(false);
             PerformLayout();
 
-            tray = new NotifyIcon { Icon = AppIcon.Load(16), Text = "BSSIDLock", Visible = true };
+            tray = new NotifyIcon { Icon = AppIcon.Load(small: true), Text = "BSSIDLock", Visible = true };
             tray.ContextMenuStrip = new ContextMenuStrip();
             tray.ContextMenuStrip.Opening += (s, e) => BuildTrayMenu(tray.ContextMenuStrip);
             tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
@@ -74,7 +77,25 @@ namespace BSSIDLock
                 await engine.TickAsync();
             };
             timer.Start();
+
+            // React within ~1.5 s when Windows roams or reconnects, instead of waiting for the next periodic check.
+            eventDebounce = new Timer { Interval = 1500 };
+            eventDebounce.Tick += async (s, e) => { eventDebounce.Stop(); await engine.TickAsync(); };
+            Wlan.ConnectionChanged += OnWifiEvent;
+            Wlan.StartMonitoring();
+
             UpdateUi();
+        }
+
+        void OnWifiEvent()
+        {
+            // Called on a Wi-Fi service thread: hop to the UI thread and restart the debounce timer.
+            try
+            {
+                if (IsHandleCreated && !IsDisposed)
+                    BeginInvoke((Action)(() => { eventDebounce.Stop(); eventDebounce.Start(); }));
+            }
+            catch (InvalidOperationException) { /* closing */ }
         }
 
         int S(int px) => (int)Math.Round(px * DeviceDpi / 96f);
@@ -342,8 +363,14 @@ namespace BSSIDLock
 
         void RebuildList()
         {
-            string selected = SelectedBssid();
             var st = engine.Settings;
+            // Skip the rebuild (and any flicker) when nothing visible changed.
+            string signature = string.Join("|", st.Favorites) + "#" + string.Join("|", engine.Visible.Select(v => v.Bssid + ":" + v.Rssi / 3))
+                + "#" + engine.Current?.Bssid + "#" + st.Target + "#" + string.Join("|", st.Names.Select(kv => kv.Key + "=" + kv.Value));
+            if (signature == listSignature) return;
+            listSignature = signature;
+
+            string selected = SelectedBssid();
             list.BeginUpdate();
             list.Items.Clear();
             for (int i = 0; i < st.Favorites.Count; i++)
@@ -471,6 +498,8 @@ namespace BSSIDLock
         void ExitApp()
         {
             exiting = true;
+            Wlan.ConnectionChanged -= OnWifiEvent;
+            Wlan.StopMonitoring();
             tray.Visible = false;
             Application.Exit();
         }
@@ -508,7 +537,7 @@ namespace BSSIDLock
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { timer?.Dispose(); tray?.Dispose(); boldFont?.Dispose(); }
+            if (disposing) { timer?.Dispose(); eventDebounce?.Dispose(); tray?.Dispose(); boldFont?.Dispose(); }
             base.Dispose(disposing);
         }
 
