@@ -281,10 +281,11 @@ namespace BSSIDLock
             bool isShortcut = e.Item is ToolStripMenuItem mi && !string.IsNullOrEmpty(mi.ShortcutKeyDisplayString) && e.Text == mi.ShortcutKeyDisplayString;
             if (e.Item is ToolStripStatusLabel sl && sl.IsLink) { base.OnRenderItemText(e); return; }
             string tag = e.Item.Tag as string;
-            e.TextColor = tag == "header" ? Theme.Text
+            var color = tag == "header" ? Theme.Text
                 : !e.Item.Enabled || isShortcut || tag == "subtle" ? Theme.Subtle
                 : Theme.Text;
-            base.OnRenderItemText(e);
+            // Draw it ourselves: the base renderer forces a system grey for disabled items (our status header).
+            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, e.TextRectangle, color, e.TextFormat);
         }
 
         protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e)

@@ -280,7 +280,7 @@ struct APRow: View {
         let b = item.bssid
         let name = e.name(for: b)
         let isCurrent = b == e.currentBSSID
-        let isTarget = b == e.target
+        let isTarget = b == e.target && e.lockEnabled
         let isFav = item.rank != nil
 
         HStack(spacing: 12) {
@@ -343,12 +343,12 @@ struct APRow: View {
     private func detail(name: String?) -> String {
         var parts: [String] = []
         if name != nil { parts.append(item.bssid) }
-        if let ap = item.ap, !ap.ssid.isEmpty, ap.ssid != e.ssid { parts.append("on “\(ap.ssid)”") }
         if let ap = item.ap {
+            if !ap.ssid.isEmpty { parts.append(ap.ssid) }
             parts.append("\(ap.band) · channel \(ap.channel)")
             parts.append("\(SignalQuality(rssi: ap.rssi).label) (\(ap.rssi) dBm)")
         } else {
-            parts.append("Out of range")
+            parts.append("Out of range" + (e.knownSSIDs[item.bssid].map { " · last seen on “\($0)”" } ?? ""))
         }
         return parts.joined(separator: " · ")
     }

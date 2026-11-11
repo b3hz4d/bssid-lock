@@ -116,7 +116,7 @@ struct MenuBarView: View {
                 .disabled(e.favorites.isEmpty)
                 ForEach(quickItems) { item in
                     ChoiceRow(title: e.label(for: item.bssid),
-                              subtitle: item.ap.map { ($0.ssid != e.ssid && !$0.ssid.isEmpty ? "\($0.ssid) · " : "") + "\($0.band) · \(SignalQuality(rssi: $0.rssi).label) (\($0.rssi) dBm)" } ?? "Out of range",
+                              subtitle: item.ap.map { ($0.ssid.isEmpty ? "" : "\($0.ssid) · ") + "\($0.band) · \(SignalQuality(rssi: $0.rssi).label) (\($0.rssi) dBm)" } ?? "Out of range",
                               rssi: item.ap?.rssi, showBars: true,
                               selected: e.lockEnabled && e.target == item.bssid) {
                         e.lockTo(item.bssid)

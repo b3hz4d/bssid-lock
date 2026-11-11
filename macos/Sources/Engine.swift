@@ -245,6 +245,8 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
             if notifyChanges { Notifier.requestPermission() }
         }
     }
+    /// The network (SSID) each access point was last seen on, keyed by BSSID.
+    @Published private(set) var knownSSIDs: [String: String] { didSet { defaults.set(knownSSIDs, forKey: "ssids") } }
     /// Friendly names for access points, keyed by BSSID.
     @Published var names: [String: String] { didSet { defaults.set(names, forKey: "names") } }
 
@@ -293,6 +295,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         interval = d.object(forKey: "interval") as? Double ?? 10
         names = d.dictionary(forKey: "names") as? [String: String] ?? [:]
         notifyChanges = d.object(forKey: "notifyChanges") as? Bool ?? true
+        knownSSIDs = d.dictionary(forKey: "ssids") as? [String: String] ?? [:]
         password = Keychain.get(s) ?? ""
         super.init()
 
@@ -421,6 +424,16 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
                   band: currentBand.isEmpty ? scanned?.band ?? "?" : currentBand)
     }
 
+    /// Remember which network each access point belongs to (shown even when it's out of range).
+    private func remember(_ pairs: [(String, String)]) {
+        var updated = knownSSIDs
+        for (b, s) in pairs where !s.isEmpty { updated[b] = s }
+        if updated != knownSSIDs { knownSSIDs = updated }
+    }
+
+    /// The network an access point is on, from the latest scan or what we saw before.
+    func networkName(_ b: String) -> String? { liveAP(b).flatMap { $0.ssid.isEmpty ? nil : $0.ssid } ?? knownSSIDs[b] }
+
     // MARK: Viewing (signal readings refresh only while someone is looking)
 
     var viewing: Bool { windowOpen || popoverOpen }
@@ -464,6 +477,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         if currentBSSID != b { currentBSSID = b }
         if currentChannel != chNum { currentChannel = chNum }
         if currentBand != band { currentBand = band }
+        if let b, let s, !s.isEmpty, knownSSIDs[b] != s { remember([(b, s)]) }
         trackChange(ssid: s, bssid: b)
         if abs(currentRSSI - r) >= 3 || (currentRSSI == 0) != (r == 0) { currentRSSI = r }   // ignore ±2 dBm jitter
     }
@@ -637,6 +651,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     private func apply(_ r: WorkResult) {
         guard r.scanned else { return }
         if visible != r.aps { visible = r.aps }
+        remember(r.aps.map { ($0.bssid, $0.ssid) })
         if !r.nearby.isEmpty && nearby != r.nearby { nearby = r.nearby }
         lastScan = Date()
     }

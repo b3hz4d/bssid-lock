@@ -185,18 +185,17 @@ namespace BSSIDLock
             }
 
             // Status header
-            var header = Item(engine.Title, null, Keep(Glyphs.Badge(engine.State, (int)(20 * sc))));
+            var header = Item(Truncate(engine.Title, 36), null, Keep(Glyphs.Badge(engine.State, (int)(20 * sc))));
             header.Font = boldFont;
             header.Tag = "header";
             header.Enabled = false;
             menu.Items.Add(header);
-            if (!string.IsNullOrEmpty(engine.Detail))
-                menu.Items.Add(new ToolStripMenuItem(Truncate(engine.Detail, 70)) { Enabled = false, Tag = "subtle", Font = smallFont });
+            // Keep the menu narrow: the full status sentence lives in the main window.
+            string detail = engine.Current != null ? engine.Current.Ssid : "Not connected to Wi-Fi";
+            menu.Items.Add(new ToolStripMenuItem(Truncate(detail, 40)) { Enabled = false, Tag = "subtle", Font = smallFont });
             menu.Items.Add(new ToolStripSeparator());
 
-            var lockItem = Item(st.LockEnabled ? "Lock is on" : "Lock is off", () => engine.SetLockEnabled(!st.LockEnabled));
-            lockItem.Checked = st.LockEnabled;
-            menu.Items.Add(lockItem);
+            menu.Items.Add(Item(st.LockEnabled ? "Turn lock off" : "Turn lock on", () => engine.SetLockEnabled(!st.LockEnabled)));
 
             // Lock targets, one click each
             if (st.Ssid.Length > 0 && !engine.AccessDenied)
@@ -215,7 +214,7 @@ namespace BSSIDLock
                 {
                     var ap = engine.Find(b);
                     string bssid = b;
-                    string label = engine.Label(b) + (st.Favorites.Contains(b) ? "  ★" : "");
+                    string label = Truncate(engine.Label(b), 28) + (st.Favorites.Contains(b) ? "  ★" : "");
                     var it = Item(label, () => engine.LockTo(bssid), Keep(Glyphs.Choice(st.LockEnabled && st.Target == b, ap?.Rssi, true, sc)));
                     it.ShortcutKeyDisplayString = ap != null ? ap.Rssi + " dBm" : "out of range";
                     if (engine.Current != null && engine.Current.Bssid == b) it.Font = boldFont;

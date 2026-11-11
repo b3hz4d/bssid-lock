@@ -257,6 +257,13 @@ namespace BSSIDLock
                 .OrderByDescending(a => a.Rssi)
                 .ToList();
             LastScan = DateTime.Now;
+
+            // Remember which network each access point is on (shown even when it's out of range). Save only on change.
+            bool changed = false;
+            foreach (var ap in Visible)
+                if (ap.Ssid.Length > 0 && (!Settings.KnownSsids.TryGetValue(ap.Bssid, out var known) || known != ap.Ssid))
+                { Settings.KnownSsids[ap.Bssid] = ap.Ssid; changed = true; }
+            if (changed) Settings.Save();
         }
 
         /// <summary>Scan for access points (all networks; the managed one is shown in the list).</summary>

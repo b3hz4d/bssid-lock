@@ -201,7 +201,7 @@ namespace BSSIDLock
             var ap = engine.Find(b);
             string name = engine.NameOf(b);
             bool isCurrent = engine.Current != null && engine.Current.Bssid == b;
-            bool isTarget = engine.Settings.Target == b;
+            bool isTarget = engine.Settings.LockEnabled && engine.Settings.Target == b;
             bool isFav = row.Rank >= 0;
             bool hot = index == hoverIndex;
             bool showTools = hot || selected;
@@ -234,13 +234,13 @@ namespace BSSIDLock
             // Detail line
             var parts = new List<string>();
             if (name != null) parts.Add(b);
-            if (ap != null && ap.Ssid.Length > 0 && ap.Ssid != engine.Settings.Ssid) parts.Add("on \u201C" + ap.Ssid + "\u201D");
             if (ap != null)
             {
+                if (ap.Ssid.Length > 0) parts.Add(ap.Ssid);
                 parts.Add(ap.Band + " · channel " + ap.Channel);
                 parts.Add(Signal.Quality(ap.Rssi) + " (" + ap.Rssi + " dBm)");
             }
-            else parts.Add("Out of range");
+            else parts.Add("Out of range" + (engine.Settings.KnownSsids.TryGetValue(b, out var seen) ? " · last seen on \u201C" + seen + "\u201D" : ""));
             TextRenderer.DrawText(g, string.Join("  ·  ", parts), smallFont,
                 new Rectangle(x, top + boldFont.Height + lineGap, width, smallFont.Height), Theme.Subtle, Ui.Left);
 
@@ -360,7 +360,7 @@ namespace BSSIDLock
                     MoreClicked?.Invoke(row.Bssid, new Point(m.Left, m.Bottom));
                     break;
                 default:
-                    if (engine.Settings.Target == row.Bssid) UnlockClicked?.Invoke(row.Bssid); else LockClicked?.Invoke(row.Bssid);
+                    if (engine.Settings.LockEnabled && engine.Settings.Target == row.Bssid) UnlockClicked?.Invoke(row.Bssid); else LockClicked?.Invoke(row.Bssid);
                     break;
             }
         }

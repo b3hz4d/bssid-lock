@@ -21,6 +21,8 @@ namespace BSSIDLock
         [DataMember] public string Target { get; set; }
         [DataMember] public bool LockEnabled { get; set; }
         [DataMember] public int IntervalSeconds { get; set; }
+        /// <summary>The network (SSID) each access point was last seen on, keyed by BSSID.</summary>
+        [DataMember] public Dictionary<string, string> KnownSsids { get; set; }
         /// <summary>Friendly names keyed by BSSID.</summary>
         [DataMember] public Dictionary<string, string> Names { get; set; }
         [DataMember] public bool TrayHintShown { get; set; }
@@ -45,6 +47,7 @@ namespace BSSIDLock
             LockEnabled = true;
             IntervalSeconds = 10;
             Names = new Dictionary<string, string>();
+            KnownSsids = new Dictionary<string, string>();
             Theme = "system";
             AutoUpdate = true;
             NotifyChanges = true;
@@ -86,6 +89,7 @@ namespace BSSIDLock
             Ssid = Ssid ?? "";
             Favorites = (Favorites ?? new List<string>()).Where(Bssid.IsValid).Select(Bssid.Canonical).Distinct().ToList();
             Names = Names ?? new Dictionary<string, string>();
+            KnownSsids = KnownSsids ?? new Dictionary<string, string>();
             if (Target != null && !Favorites.Contains(Target)) Target = null;
             if (IntervalSeconds < 3 || IntervalSeconds > 120) IntervalSeconds = 10;
             if (Theme != "light" && Theme != "dark") Theme = "system";
