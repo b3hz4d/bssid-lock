@@ -122,7 +122,8 @@ namespace BSSIDLock
             typeof(NotifyIcon).GetMethod("ShowContextMenu", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(icon, null);
         }
 
-        public void ShowBalloon(string title, string text) => icon.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+        public void ShowBalloon(string title, string text) =>
+            icon.ShowBalloonTip(5000, string.IsNullOrEmpty(title) ? "BSSIDLock" : title, string.IsNullOrEmpty(text) ? " " : text, ToolTipIcon.Info);
 
         /// <summary>Refresh the tray icon (status dot) and tooltip.</summary>
         public void Update()

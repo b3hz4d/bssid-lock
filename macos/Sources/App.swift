@@ -1,10 +1,18 @@
 // BSSIDLock: keep your Mac connected to the Wi-Fi access point(s) you choose.
 // https://github.com/b3hz4d/bssid-lock
 import SwiftUI
+import UserNotifications
 
 /// Closing the main window leaves BSSIDLock running in the menu bar only, with no Dock icon.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// Show notifications as banners even while BSSIDLock is the active app.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list])
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         // After an automatic update, come back quietly in the menu bar.
         if CommandLine.arguments.contains("--updated") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

@@ -28,6 +28,7 @@ BSSIDLock does:
 - **Stays locked.** It checks every few seconds and switches back if the system roams away.
 - **Only touches the network you choose.** On any other Wi-Fi it does nothing.
 - **Lives in the menu bar (macOS) or notification area (Windows).** Closing the window keeps it running there. One click switches the lock target, with signal strength in dBm for every access point.
+- **Tells you when the network changes.** A notification appears when you join a different Wi-Fi network or switch access points, and says whether BSSIDLock or the system made the switch.
 - **Updates itself.** It checks GitHub once a day and installs new versions in the background. You can turn this off.
 - **Light and dark mode** on both platforms. Windows follows your system setting, or you can pick one.
 - **Start at login**, quietly in the background.

@@ -29,6 +29,8 @@ namespace BSSIDLock
         /// <summary>Check GitHub once a day and install new versions automatically.</summary>
         [DataMember] public bool AutoUpdate { get; set; }
         [DataMember] public long LastUpdateCheckTicks { get; set; }
+        /// <summary>Show a notification when the Wi-Fi network or access point changes.</summary>
+        [DataMember] public bool NotifyChanges { get; set; }
 
         public AppSettings() { SetDefaults(); }
 
@@ -45,6 +47,7 @@ namespace BSSIDLock
             Names = new Dictionary<string, string>();
             Theme = "system";
             AutoUpdate = true;
+            NotifyChanges = true;
         }
 
         static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BSSIDLock");

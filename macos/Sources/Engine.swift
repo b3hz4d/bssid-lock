@@ -4,6 +4,21 @@ import CoreWLAN
 import CoreLocation
 import Security
 import ServiceManagement
+import UserNotifications
+
+/// System notifications (Notification Center).
+enum Notifier {
+    static func requestPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+    static func post(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        // One identifier, so a newer change replaces the previous notification instead of stacking.
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "network-change", content: content, trigger: nil))
+    }
+}
 
 // MARK: - Helpers
 
@@ -207,6 +222,13 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         }
     }
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
+    /// Show a notification when the Wi-Fi network or access point changes.
+    @Published var notifyChanges: Bool {
+        didSet {
+            defaults.set(notifyChanges, forKey: "notifyChanges")
+            if notifyChanges { Notifier.requestPermission() }
+        }
+    }
     /// Friendly names for access points, keyed by BSSID.
     @Published var names: [String: String] { didSet { defaults.set(names, forKey: "names") } }
 
@@ -230,6 +252,9 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     private let lm = CLLocationManager()
     private var retryAfter = Date.distantPast
     private var pendingCheck: Task<Void, Never>?
+    private var announced: (ssid: String?, bssid: String?)?
+    private var changeCheck: Task<Void, Never>?
+    private var lastSwitchByUs = Date.distantPast
     private static let retryBackoff: TimeInterval = 60
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
@@ -245,11 +270,13 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         lockEnabled = d.object(forKey: "lockEnabled") as? Bool ?? true
         interval = d.object(forKey: "interval") as? Double ?? 10
         names = d.dictionary(forKey: "names") as? [String: String] ?? [:]
+        notifyChanges = d.object(forKey: "notifyChanges") as? Bool ?? true
         password = Keychain.get(s) ?? ""
         super.init()
 
         launchAtLogin = SMAppService.mainApp.status == .enabled
         updater.log = { [weak self] message in self?.addLog(message) }
+        if notifyChanges { Notifier.requestPermission() }
         if CommandLine.arguments.contains("--updated") { addLog("Updated to version \(Updater.currentVersion)") }
         lm.delegate = self
         locAuth = lm.authorizationStatus
@@ -373,7 +400,51 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         let r = i?.rssiValue() ?? 0
         if currentSSID != s { currentSSID = s }
         if currentBSSID != b { currentBSSID = b }
+        trackChange(ssid: s, bssid: b)
         if abs(currentRSSI - r) >= 3 || (currentRSSI == 0) != (r == 0) { currentRSSI = r }   // ignore ±2 dBm jitter
+    }
+
+    // MARK: Change notifications
+
+    /// Notice a new network / access point; announce it only if it's still the same ~4 s later,
+    /// so a roam that BSSIDLock immediately corrects doesn't produce two notifications.
+    private func trackChange(ssid s: String?, bssid b: String?) {
+        guard let prev = announced else {
+            if s != nil { announced = (s, b) }   // starting point, not a change
+            return
+        }
+        guard s != nil, s != prev.ssid || b != prev.bssid, changeCheck == nil else { return }
+        changeCheck = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            self?.confirmChange()
+        }
+    }
+
+    private func confirmChange() {
+        changeCheck = nil
+        let i = CWWiFiClient.shared().interface()
+        guard let s = i?.ssid(), let prev = announced else { return }
+        let b = i?.bssid().map(canonical)
+        let rssi = i?.rssiValue() ?? 0
+        guard s != prev.ssid || b != prev.bssid else { return }
+        announced = (s, b)
+
+        let title: String
+        var body: String
+        if s != prev.ssid {
+            title = "Connected to “\(s)”"
+            if s == ssid { body = "BSSIDLock is managing this network" + (b.map { " · " + label(for: $0) } ?? "") + "." }
+            else if !ssid.isEmpty { body = "BSSIDLock only acts on “\(ssid)”, so it's idle here." }
+            else { body = "Wi-Fi network changed." }
+        } else if let b {
+            title = "Switched to \(label(for: b))"
+            body = s
+            if rssi != 0 { body += " · \(SignalQuality(rssi: rssi).label) (\(rssi) dBm)" }
+            body += Date().timeIntervalSince(lastSwitchByUs) < 20 ? " · moved by BSSIDLock" : " · macOS roamed"
+        } else { return }
+
+        addLog("\(title). \(body)")
+        if notifyChanges { Notifier.post(title: title, body: body) }
     }
 
     /// First run: if no network is configured yet, use the one the Mac is on now.
@@ -470,6 +541,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         if r.scanned { visible = r.aps; lastScan = Date() }
         addLog(r.message)
         refresh()
+        if r.ok { lastSwitchByUs = Date() }
         if let b = currentBSSID, wanted.contains(b) {
             setStatus(.locked, "Locked to \(label(for: b))", connectionDetail)
         }

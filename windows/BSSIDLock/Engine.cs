@@ -30,6 +30,8 @@ namespace BSSIDLock
 
         public AppSettings Settings { get; }
         public event EventHandler Changed;
+        /// <summary>The network or access point changed and stayed changed: (title, details).</summary>
+        public event Action<string, string> NetworkChanged;
 
         public ConnectionInfo Current { get; private set; }
         public List<BssEntry> Visible { get; private set; } = new List<BssEntry>();
@@ -47,6 +49,9 @@ namespace BSSIDLock
 
         DateTime retryAfter = DateTime.MinValue;
         bool ticking;
+        (string Ssid, string Bssid)? announced;
+        bool changeCheckPending;
+        DateTime lastSwitchByUs = DateTime.MinValue;
 
         public Engine(AppSettings settings) { Settings = settings; }
 
@@ -167,6 +172,7 @@ namespace BSSIDLock
                 Current = await Task.Run(() => Wlan.GetCurrentConnection());
                 // Only a real answer proves we have access; "not connected" doesn't touch the protected API.
                 if (Current != null) { AccessDenied = false; LastError = null; }
+                TrackChange();
             }
             catch (WlanException ex)
             {
@@ -185,6 +191,55 @@ namespace BSSIDLock
             }
             if (LastError != ex.Message) AddLog(ex.Message);   // log each new problem once, not every few seconds
             LastError = ex.Message;
+        }
+
+        // ---- Change notifications ----
+
+        /// <summary>
+        /// Notice a new network / access point; announce it only if it's still the same ~4 s later,
+        /// so a roam that BSSIDLock immediately corrects doesn't produce two notifications.
+        /// </summary>
+        void TrackChange()
+        {
+            if (Current == null) return;
+            var now = (Current.Ssid, Current.Bssid);
+            if (announced == null) { announced = now; return; }   // starting point, not a change
+            if (now == announced.Value || changeCheckPending) return;
+            changeCheckPending = true;
+            _ = ConfirmChangeAsync();
+        }
+
+        async Task ConfirmChangeAsync()
+        {
+            await Task.Delay(4000);
+            ConnectionInfo c;
+            try { c = await Task.Run(() => Wlan.GetCurrentConnection()); }
+            catch (WlanException) { changeCheckPending = false; return; }
+            changeCheckPending = false;
+            if (c == null || announced == null) return;
+            var prev = announced.Value;
+            var now = (c.Ssid, c.Bssid);
+            if (now == prev) return;
+            announced = now;
+
+            string title, body;
+            if (c.Ssid != prev.Ssid)
+            {
+                title = "Connected to \"" + c.Ssid + "\"";
+                body = c.Ssid == Settings.Ssid ? "BSSIDLock is managing this network · " + Label(c.Bssid) + "."
+                    : Settings.Ssid.Length > 0 ? "BSSIDLock only acts on \"" + Settings.Ssid + "\", so it's idle here."
+                    : "Wi-Fi network changed.";
+            }
+            else
+            {
+                title = "Switched to " + Label(c.Bssid);
+                var ap = Find(c.Bssid);
+                body = c.Ssid + (ap != null ? " · " + Signal.Quality(ap.Rssi) + " (" + ap.Rssi + " dBm)" : " · signal " + c.SignalQuality + "%")
+                    + ((DateTime.Now - lastSwitchByUs).TotalSeconds < 20 ? " · moved by BSSIDLock" : " · Windows roamed");
+            }
+            AddLog(title + ". " + body);
+            NetworkChanged?.Invoke(title, body);
+            RaiseChanged();
         }
 
         void ApplyScan(List<BssEntry> all)
@@ -259,6 +314,7 @@ namespace BSSIDLock
                         }
                         if (Current != null && Current.Bssid == b)
                         {
+                            lastSwitchByUs = DateTime.Now;
                             AddLog("Connected to " + Label(b) + " (" + ap.Rssi + " dBm)");
                             return true;
                         }

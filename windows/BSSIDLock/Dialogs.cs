@@ -88,7 +88,7 @@ namespace BSSIDLock
         readonly Updater updater;
         readonly ComboBox ssid, appearance;
         readonly NumericUpDown interval;
-        readonly CheckBox startup, autoUpdate;
+        readonly CheckBox startup, autoUpdate, notify;
         readonly TextBox manual;
         readonly Label updateStatus;
         readonly Button checkNow;
@@ -126,6 +126,8 @@ namespace BSSIDLock
                 new Label { Text = "seconds (Wi-Fi changes are handled instantly)", AutoSize = true, Tag = "subtle", Margin = new Padding(3, 6, 3, 0) }));
             startup = new CheckBox { Text = "Start BSSIDLock when I sign in to Windows (in the notification area)", AutoSize = true, Checked = StartWithWindows.IsEnabled, Margin = new Padding(3, 8, 3, 3) };
             grid.Controls.Add(startup);
+            notify = new CheckBox { Text = "Notify me when the Wi-Fi network or access point changes", AutoSize = true, Checked = st.NotifyChanges, Margin = new Padding(3, 4, 3, 3) };
+            grid.Controls.Add(notify);
 
             // Appearance
             grid.Controls.Add(Heading("Appearance"));
@@ -183,6 +185,7 @@ namespace BSSIDLock
             {
                 st.IntervalSeconds = (int)interval.Value;
                 st.AutoUpdate = autoUpdate.Checked;
+                st.NotifyChanges = notify.Checked;
                 st.Theme = ThemeKeys[appearance.SelectedIndex];
                 try { StartWithWindows.Set(startup.Checked); }
                 catch (Exception ex) { engine.AddLog("Couldn't change \"start with Windows\": " + ex.Message); }

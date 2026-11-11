@@ -87,6 +87,7 @@ struct SettingsSheet: View {
                 Section("Behavior") {
                     Stepper("Check every \(Int(e.interval)) seconds", value: $e.interval, in: 3...120, step: 1)
                     Toggle("Open at login", isOn: Binding(get: { e.launchAtLogin }, set: { e.setLaunchAtLogin($0) }))
+                    Toggle("Notify me when the Wi-Fi network or access point changes", isOn: $e.notifyChanges)
                 }
 
                 Section {

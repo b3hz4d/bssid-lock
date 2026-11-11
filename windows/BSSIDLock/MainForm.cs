@@ -67,6 +67,7 @@ namespace BSSIDLock
             tray.UpdateRequested += async () => await updater.CheckAsync(userInitiated: true);
 
             engine.Changed += (s, e) => UpdateUi();
+            engine.NetworkChanged += (t, body) => { if (engine.Settings.NotifyChanges) tray.ShowBalloon(t, body); };
             updater.Changed += (s, e) => UpdateUi();
             updater.RestartRequested += RestartInto;
             Theme.Changed += (s, e) => { if (InvokeRequired) BeginInvoke((Action)ApplyTheme); else ApplyTheme(); };
