@@ -61,7 +61,7 @@ struct BSSIDLockApp: App {
             CommandMenu("Lock") {
                 Toggle("Lock Enabled", isOn: $engine.lockEnabled)
                     .keyboardShortcut("l", modifiers: .command)
-                Button("Scan Now") { Task { await engine.scan() } }
+                Button("Scan Now") { engine.requestScan() }
                     .keyboardShortcut("r", modifiers: .command)
                 Divider()
                 Button("Show Activity") { ui.showActivity = true }
@@ -136,9 +136,12 @@ struct MenuBarView: View {
             Divider()
             HStack(spacing: 14) {
                 Button("Open BSSIDLock") { show() }
+                Text("v\(Updater.currentVersion)").font(.caption).foregroundStyle(.tertiary)
                 Spacer()
-                Button { Task { await e.scan() } } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Scan").disabled(e.busy)
+                Button { e.requestScan() } label: {
+                    if e.busy { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+                }
+                .help("Scan now")
                 Button { show(); ui.showSettings = true } label: { Image(systemName: "gearshape") }
                     .help("Settings")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }

@@ -133,9 +133,8 @@ struct NetworkOnboarding: View {
                 HStack {
                     Text("Nearby networks")
                     Spacer()
-                    Button { Task { await e.scanNetworks() } } label: { Image(systemName: "arrow.clockwise") }
+                    Button { e.requestScan() } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.borderless)
-                        .disabled(e.busy)
                         .help("Scan again")
                 }
             }
@@ -179,9 +178,10 @@ struct Dashboard: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button { Task { await e.scan() } } label: { Label("Scan", systemImage: "arrow.clockwise") }
-                    .disabled(e.busy)
-                    .help("Scan for access points")
+                Button { e.requestScan() } label: {
+                    if e.busy { ProgressView().controlSize(.small) } else { Label("Scan", systemImage: "arrow.clockwise") }
+                }
+                .help("Scan for access points now")
                 Button { ui.showActivity = true } label: { Label("Activity", systemImage: "list.bullet.rectangle") }
                     .help("Show what BSSIDLock has done")
                 Button { ui.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
@@ -375,8 +375,11 @@ struct FooterBar: View {
             } else {
                 Text("Not scanned yet")
             }
+            Text("· refreshed every \(Int(e.interval)) s while open")
             Spacer()
-            Text("Checks every \(Int(e.interval)) s · Right-click an access point for more options")
+            Text("Right-click an access point for more options")
+            Text("·")
+            Text("Version \(Updater.currentVersion)")
         }
         .font(.caption)
         .foregroundStyle(.secondary)

@@ -25,7 +25,7 @@ namespace BSSIDLock
 
         // Header
         StatusBadge badge;
-        Label title, detail;
+        TitleBlock heading;
         ToggleSwitch lockSwitch;
         // Toolbar
         Label lockToLabel;
@@ -37,7 +37,7 @@ namespace BSSIDLock
         EmptyState empty;
         ContextMenuStrip listMenu;
         // Footer
-        Label footer;
+        Label footer, versionLabel;
         LinkLabel updateLink;
 
         public MainForm(Engine engine, bool startHidden, bool justUpdated)
@@ -163,19 +163,14 @@ namespace BSSIDLock
 
             badge = new StatusBadge { Size = new Size(54, 54), Margin = new Padding(0, 0, 16, 0), Anchor = AnchorStyles.Left };
 
-            var text = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, AutoSize = true, Margin = new Padding(0) };
-            title = new Label { AutoSize = true, Font = new Font("Segoe UI Semibold", 15F), Margin = new Padding(0, 4, 0, 2) };
-            detail = new Label { AutoSize = true, Tag = "subtle", Margin = new Padding(2, 0, 0, 0) };
-            text.Controls.Add(title, 0, 0);
-            text.Controls.Add(detail, 0, 1);
-            text.SizeChanged += (s, e) => { title.MaximumSize = detail.MaximumSize = new Size(Math.Max(100, text.Width), 0); };
+            heading = new TitleBlock { Dock = DockStyle.Fill, Margin = new Padding(0) };
 
             lockSwitch = new ToggleSwitch { Text = "Lock", Font = new Font("Segoe UI Semibold", 11F), Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
             lockSwitch.CheckedChanged += (s, e) => { if (!updating) engine.SetLockEnabled(lockSwitch.Checked); };
             new ToolTip().SetToolTip(lockSwitch, "When on, BSSIDLock keeps you on the access point(s) you chose");
 
             header.Controls.Add(badge, 0, 0);
-            header.Controls.Add(text, 1, 0);
+            header.Controls.Add(heading, 1, 0);
             header.Controls.Add(lockSwitch, 2, 0);
             return header;
         }
@@ -186,13 +181,10 @@ namespace BSSIDLock
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            var left = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Left };
-            lockToLabel = new Label { Text = "Lock to", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
-            lockTo = new DropDownButton { MinWidth = 240, Margin = new Padding(0), EmptyText = "Star access points to add them here" };
+            lockToLabel = new Label { Text = "Lock to", AutoSize = true, Tag = "theme:skip" };
+            lockTo = new DropDownButton { MinWidth = 240, EmptyText = "Star access points to add them here" };
             lockTo.SelectionChanged += (s, e) => engine.SetTarget(lockTo.SelectedValue as string);
-            left.Controls.Add(lockToLabel);
-            left.Controls.Add(lockTo);
-            left.Layout += (s, e) => lockToLabel.Margin = new Padding(0, (lockTo.Height - lockToLabel.Height) / 2, 8, 0);
+            var left = new HStack(lockToLabel, lockTo) { AutoSize = true, Margin = new Padding(0), Anchor = AnchorStyles.Left };
 
             var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Right };
             scanButton = new UiButton { Glyph = Ui.GlyphRefresh, Text = "Scan" };
@@ -242,14 +234,17 @@ namespace BSSIDLock
 
         Control BuildFooter()
         {
-            var bar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
+            var bar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             footer = new Label { AutoSize = true, Tag = "subtle", Anchor = AnchorStyles.Left, Margin = new Padding(2, 0, 0, 0) };
-            updateLink = new LinkLabel { AutoSize = true, Anchor = AnchorStyles.Right, Visible = false, LinkBehavior = LinkBehavior.HoverUnderline, Margin = new Padding(0) };
+            updateLink = new LinkLabel { AutoSize = true, Anchor = AnchorStyles.Right, Visible = false, LinkBehavior = LinkBehavior.HoverUnderline, Margin = new Padding(0, 0, 14, 0) };
             updateLink.LinkClicked += async (s, e) => await updater.CheckAsync(userInitiated: true);
+            versionLabel = new Label { AutoSize = true, Tag = "subtle", Anchor = AnchorStyles.Right, Margin = new Padding(0), Text = "Version " + Updater.Current };
             bar.Controls.Add(footer, 0, 0);
             bar.Controls.Add(updateLink, 1, 0);
+            bar.Controls.Add(versionLabel, 2, 0);
             return bar;
         }
 
@@ -259,6 +254,7 @@ namespace BSSIDLock
             Theme.Apply(this);
             listHost.BackColor = Theme.Border;
             list.ApplyTheme();
+            heading.Invalidate();
             listSignature = null;   // redraw rows with the new colors
             UpdateUi();
         }
@@ -274,8 +270,8 @@ namespace BSSIDLock
                 var st = engine.Settings;
 
                 badge.State = engine.State;
-                SetText(title, engine.Title);
-                SetText(detail, engine.Detail);
+                heading.Title = engine.Title;
+                heading.Detail = engine.Detail;
                 lockSwitch.Checked = st.LockEnabled;
 
                 string optSig = string.Join("|", st.Favorites.Select(engine.Label)) + "#" + st.Target;
@@ -287,7 +283,8 @@ namespace BSSIDLock
                     lockTo.SetOptions(options);
                     lockTo.SelectedValue = st.Target;
                 }
-                lockTo.Enabled = lockToLabel.Enabled = st.LockEnabled;
+                // Stay readable when the lock is off (disabled labels are nearly invisible in dark mode).
+                lockToLabel.ForeColor = st.LockEnabled ? Theme.Text : Theme.Subtle;
                 scanButton.Enabled = !engine.Busy;
                 SetText(scanButton, engine.Busy ? "Scanning…" : "Scan");
 

@@ -94,7 +94,7 @@ namespace BSSIDLock
     {
         readonly Engine engine;
         readonly Updater updater;
-        readonly Panel host;
+        readonly ScrollHost host;
         readonly StackPanel stack;
         readonly Panel footer;
         readonly FieldBox ssid, manual;
@@ -115,11 +115,9 @@ namespace BSSIDLock
             FormBorderStyle = FormBorderStyle.Sizable;
             StartPosition = FormStartPosition.Manual;
 
-            host = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             stack = new StackPanel { Location = Point.Empty };
             stack.SuspendLayout();
-            host.Controls.Add(stack);
-            host.Layout += (s, e) => { int w = host.ClientSize.Width; if (stack.Width != w) stack.Width = w; };
+            host = new ScrollHost(stack) { Dock = DockStyle.Fill };
 
             // ---- Network
             ssid = new FieldBox { DesignWidth = 220, Placeholder = "Network name" };
@@ -262,11 +260,7 @@ namespace BSSIDLock
                 Math.Max(area.Top + Ui.S(this, 10), anchor.Top + (anchor.Height - Height) / 2));
         }
 
-        protected override void OnThemeApplied()
-        {
-            Theme.NativeTheme(host, "DarkMode_Explorer");   // dark scrollbar
-            host.Invalidate(true);
-        }
+        protected override void OnThemeApplied() => host.Invalidate(true);
 
         void AskCustomInterval()
         {
@@ -370,7 +364,7 @@ namespace BSSIDLock
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
             var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Padding = new Padding(22, 18, 22, 16) };
             label = new Label { Text = message, AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
-            box = new FieldBox { Width = 420, Margin = new Padding(0, 0, 0, 18) };
+            box = new FieldBox { DesignWidth = 380, Margin = new Padding(0, 0, 0, 18) };
             box.Text = value;
             var ok = new UiButton { Text = "Save", Style = UiButton.Kind.Primary, DialogResult = DialogResult.OK };
             var cancel = new UiButton { Text = "Cancel", DialogResult = DialogResult.Cancel };

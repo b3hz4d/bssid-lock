@@ -275,6 +275,8 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     private var changeCheck: Task<Void, Never>?
     private var lastSwitchByUs = Date.distantPast
     private var windowOpen = false, popoverOpen = false
+    private var rescanRequested = false
+    private var lastActiveScan = Date.distantPast
     private static let retryBackoff: TimeInterval = 60
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
@@ -435,7 +437,14 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         guard viewing, locationOK, !busy else { return }
         let every = staleAfter ?? max(10, interval) - 0.5
         if let last = lastScan, Date().timeIntervalSince(last) < every { return }
-        await scan(quiet: true)
+        // macOS's own recent results most of the time; a real radio scan at most every 30 s.
+        let active = Date().timeIntervalSince(lastActiveScan) >= max(30, interval)
+        await scan(quiet: true, active: active)
+    }
+
+    /// The Scan / refresh buttons: always does something. If a scan is already running, another follows it.
+    func requestScan() {
+        if busy { rescanRequested = true } else { Task { await scan() } }
     }
 
     // MARK: Loop
@@ -606,15 +615,20 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
 
     /// One scan updates everything: the managed network's access points, favorites on any network,
     /// and the list of nearby network names. `quiet` scans (periodic refreshes) only log problems.
-    func scan(quiet: Bool = false) async {
+    func scan(quiet: Bool = false, active: Bool = true) async {
         guard !busy, locationOK else { return }
         busy = true
-        defer { busy = false }
         let (s, favs) = (ssid, favorites)
-        let r = await Task.detached { Engine.doWork(ssid: s, favorites: favs, order: [], password: "", associate: false) }.value
+        let r = await Task.detached { Engine.doWork(ssid: s, favorites: favs, order: [], password: "", associate: false, active: active) }.value
+        if active && r.scanned { lastActiveScan = Date() }
         apply(r)
         if !quiet || !r.ok { addLog(r.message) }
         refresh()
+        busy = false
+        if rescanRequested {
+            rescanRequested = false
+            await scan()
+        }
     }
 
     /// Scan for nearby network names (same scan as above).
@@ -671,7 +685,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
 
     /// Scan (one pass over all channels), and optionally join the first wanted access point in range.
     /// Only access points of the managed network are ever joined.
-    nonisolated static func doWork(ssid: String, favorites: [String], order: [String], password: String, associate: Bool) -> WorkResult {
+    nonisolated static func doWork(ssid: String, favorites: [String], order: [String], password: String, associate: Bool, active: Bool = true) -> WorkResult {
         guard let iface = CWWiFiClient.shared().interface() else {
             return .init(aps: [], scanned: false, message: "No Wi-Fi interface", ok: false)
         }
@@ -682,9 +696,21 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
             return .init(aps: [], scanned: false, message: "Connected to \(first) (\(cached.rssiValue) dBm)", ok: true)
         }
 
+        // Periodic refreshes use the results macOS already has (no radio scan) when they exist.
+        let cached = iface.cachedScanResults() ?? []
         let nets: Set<CWNetwork>
-        do { nets = try iface.scanForNetworks(withName: nil) }
-        catch { return .init(aps: [], scanned: false, message: "Scan failed: \(error.localizedDescription)", ok: false) }
+        if !active && !associate && !cached.isEmpty {
+            nets = cached
+        } else {
+            do { nets = try iface.scanForNetworks(withName: nil) }
+            catch {
+                // macOS may refuse back-to-back scans ("busy"); fall back to its recent results.
+                guard !cached.isEmpty else {
+                    return .init(aps: [], scanned: false, message: "Scan failed: \(error.localizedDescription)", ok: false)
+                }
+                nets = cached
+            }
+        }
 
         let withB = nets.filter { $0.bssid != nil }
         NetworkCache.shared.store(Array(withB))

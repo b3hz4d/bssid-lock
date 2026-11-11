@@ -24,7 +24,7 @@ struct SettingsSheet: View {
                                 Button(n.count > 1 ? "\(n.ssid)  (\(n.count) access points)" : n.ssid) { ui.ssidDraft = n.ssid }
                             }
                             Divider()
-                            Button("Scan Again") { Task { await e.scanNetworks() } }
+                            Button("Scan Again") { e.requestScan() }
                         }
                         .fixedSize()
                     }

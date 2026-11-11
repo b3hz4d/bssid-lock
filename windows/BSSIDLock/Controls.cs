@@ -410,6 +410,7 @@ namespace BSSIDLock
         {
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             Controls.Add(Box);
+            AutoSize = true;
             Box.HandleCreated += (s, e) => ApplyPlaceholder();
             Box.GotFocus += (s, e) => { focused = true; Invalidate(); };
             Box.LostFocus += (s, e) => { focused = false; Invalidate(); };
@@ -653,6 +654,177 @@ namespace BSSIDLock
         {
             e.Graphics.Clear(Ui.Back(this));
             TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(Ui.S(this, 2), 0, Width, Height), Theme.Text, Ui.Left);
+        }
+    }
+
+    /// <summary>Scrollable area with a slim, theme-colored scrollbar (the system one ignores dark mode).</summary>
+    sealed class ScrollHost : Panel
+    {
+        readonly Control content;
+        readonly ScrollStrip bar;
+        int offset;
+
+        public ScrollHost(Control content)
+        {
+            this.content = content;
+            bar = new ScrollStrip(this) { Dock = DockStyle.Right };
+            Controls.Add(content);
+            Controls.Add(bar);
+            bar.BringToFront();
+            content.SizeChanged += (s, e) => PerformLayout();
+        }
+
+        internal int Offset => offset;
+        internal int ViewHeight => ClientSize.Height;
+        internal int ContentHeight => content.Height;
+        internal int MaxOffset => Math.Max(0, content.Height - ClientSize.Height);
+
+        internal void ScrollTo(int y)
+        {
+            int v = Math.Max(0, Math.Min(MaxOffset, y));
+            if (content.Top != -v) content.Top = -v;
+            if (v == offset) return;
+            offset = v;
+            bar.Invalidate();
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            int w = ClientSize.Width - bar.Width;
+            if (content.Width != w) content.Width = w;
+            content.Left = 0;
+            ScrollTo(offset);
+            bar.Invalidate();
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            ScrollTo(offset - e.Delta * Ui.S(this, 60) / 120);
+            base.OnMouseWheel(e);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(Ui.Back(this));
+    }
+
+    /// <summary>The scrollbar of a ScrollHost: a rounded thumb that widens on hover and can be dragged.</summary>
+    sealed class ScrollStrip : Control
+    {
+        readonly ScrollHost host;
+        bool hover, dragging;
+        int dragY, dragOffset;
+
+        public ScrollStrip(ScrollHost host)
+        {
+            this.host = host;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnParentChanged(EventArgs e) { base.OnParentChanged(e); Width = Ui.S(this, 14); }
+        protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); Width = Ui.S(this, 14); }
+
+        Rectangle Thumb
+        {
+            get
+            {
+                int view = host.ViewHeight, content = Math.Max(1, host.ContentHeight);
+                if (content <= view || view <= 0) return Rectangle.Empty;
+                int pad = Ui.S(this, 3);
+                int track = view - pad * 2;
+                int h = Math.Max(Ui.S(this, 36), (int)((long)track * view / content));
+                int y = pad + (int)((long)(track - h) * host.Offset / Math.Max(1, host.MaxOffset));
+                int w = hover || dragging ? Ui.S(this, 8) : Ui.S(this, 4);
+                return new Rectangle(Width - w - Ui.S(this, 3), y, w, h);
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Ui.Back(this));
+            var t = Thumb;
+            if (t.IsEmpty) return;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var color = dragging ? Theme.Subtle : hover ? Theme.Mix(Theme.Subtle, Ui.Back(this), 0.2f) : Theme.Mix(Theme.Subtle, Ui.Back(this), 0.45f);
+            Ui.FillRound(g, t, t.Width / 2f, color);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            var t = Thumb;
+            if (t.IsEmpty) return;
+            if (e.Y >= t.Top && e.Y <= t.Bottom) { dragging = true; dragY = e.Y; dragOffset = host.Offset; Capture = true; }
+            else host.ScrollTo(host.Offset + (e.Y < t.Top ? -1 : 1) * host.ViewHeight * 9 / 10);   // page up / down
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (!dragging) return;
+            var t = Thumb;
+            int track = host.ViewHeight - Ui.S(this, 6) - t.Height;
+            if (track > 0) host.ScrollTo(dragOffset + (int)((long)(e.Y - dragY) * host.MaxOffset / track));
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            dragging = false;
+            Capture = false;
+            Invalidate();
+        }
+    }
+
+    /// <summary>Big title with a wrapping detail line underneath, both starting at the same left edge.</summary>
+    sealed class TitleBlock : Control
+    {
+        string detail = "";
+        Font titleFont;
+        const TextFormatFlags WrapFlags = TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.Left | TextFormatFlags.Top;
+
+        public TitleBlock()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            AutoSize = true;
+        }
+
+        public string Title { get => Text; set { if (Text != value) { Text = value; Changed(); } } }
+        public string Detail { get => detail; set { value = value ?? ""; if (detail != value) { detail = value; Changed(); } } }
+
+        void Changed() { Parent?.PerformLayout(); Invalidate(); }
+
+        Font TitleFont => titleFont ?? (titleFont = new Font("Segoe UI Semibold", Font.Size + 5.5f));
+        protected override void OnFontChanged(EventArgs e) { titleFont?.Dispose(); titleFont = null; base.OnFontChanged(e); }
+
+        int DetailHeight(int width) => detail.Length == 0 ? 0 : TextRenderer.MeasureText(detail, Font, new Size(Math.Max(1, width), int.MaxValue), WrapFlags).Height;
+
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            int w = proposedSize.Width > 0 ? proposedSize.Width : Math.Max(Width, Ui.S(this, 300));
+            return new Size(w, TitleFont.Height + Ui.S(this, 4) + DetailHeight(w));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Ui.Back(this));
+            int th = TitleFont.Height;
+            int top = Math.Max(0, (Height - th - Ui.S(this, 4) - DetailHeight(Width)) / 2);
+            TextRenderer.DrawText(g, Text, TitleFont, new Rectangle(0, top, Width, th), Theme.Text, Ui.Left);
+            if (detail.Length > 0)
+                TextRenderer.DrawText(g, detail, Font, new Rectangle(0, top + th + Ui.S(this, 4), Width, DetailHeight(Width)), Theme.Subtle, WrapFlags);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) titleFont?.Dispose();
+            base.Dispose(disposing);
         }
     }
 
