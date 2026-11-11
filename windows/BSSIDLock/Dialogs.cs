@@ -52,47 +52,63 @@ namespace BSSIDLock
             ShowInTaskbar = false;
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            Padding = new Padding(14);
+            Padding = new Padding(16);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Theme.Apply(this);
         }
 
         protected static FlowLayoutPanel ButtonRow(params Button[] buttons)
         {
-            var row = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 12, 0, 0) };
-            foreach (var b in buttons) { b.AutoSize = true; b.MinimumSize = new Size(84, 0); row.Controls.Add(b); }
+            var row = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 14, 0, 0) };
+            foreach (var b in buttons) { b.AutoSize = true; b.MinimumSize = new Size(88, 30); b.Margin = new Padding(6, 0, 0, 0); row.Controls.Add(b); }
             return row;
         }
 
         protected static Label Hint(string text) =>
-            new Label { Text = text, AutoSize = true, ForeColor = Color.FromArgb(107, 114, 128), MaximumSize = new Size(440, 0), Margin = new Padding(3, 0, 3, 10) };
+            new Label { Text = text, AutoSize = true, Tag = "subtle", MaximumSize = new Size(460, 0), Margin = new Padding(3, 2, 3, 8) };
 
         protected static Label Heading(string text) =>
-            new Label { Text = text, AutoSize = true, Font = new Font("Segoe UI Semibold", 9.5F), Margin = new Padding(3, 8, 3, 4) };
+            new Label { Text = text, AutoSize = true, Font = new Font("Segoe UI Semibold", 10F), Margin = new Padding(2, 12, 3, 6) };
+
+        protected static FlowLayoutPanel Row(params Control[] controls)
+        {
+            var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+            row.Controls.AddRange(controls);
+            return row;
+        }
     }
 
     sealed class SettingsForm : DialogBase
     {
         readonly Engine engine;
-        readonly ComboBox ssid;
+        readonly Updater updater;
+        readonly ComboBox ssid, appearance;
         readonly NumericUpDown interval;
-        readonly CheckBox startup;
+        readonly CheckBox startup, autoUpdate;
         readonly TextBox manual;
+        readonly Label updateStatus;
+        readonly Button checkNow;
 
-        public SettingsForm(Engine engine) : base("BSSIDLock Settings")
+        static readonly string[] ThemeKeys = { "system", "light", "dark" };
+
+        public SettingsForm(Engine engine, Updater updater) : base("BSSIDLock Settings")
         {
             this.engine = engine;
+            this.updater = updater;
             var st = engine.Settings;
-
             var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
 
+            // Network
             grid.Controls.Add(Heading("Network to manage"));
-            var ssidRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-            ssid = new ComboBox { Width = 280, DropDownStyle = ComboBoxStyle.DropDown, Text = st.Ssid };
+            ssid = new ComboBox { Width = 290, DropDownStyle = ComboBoxStyle.DropDown, Text = st.Ssid };
             ssid.Items.AddRange(engine.Nearby.Select(n => (object)n.Ssid).ToArray());
-            var useCurrent = new Button { Text = "Use current network", AutoSize = true, Enabled = engine.Current != null };
+            var useCurrent = new Button { Text = "Use current network", AutoSize = true, Enabled = engine.Current != null, Margin = new Padding(6, 0, 0, 0) };
             useCurrent.Click += (s, e) => { if (engine.Current != null) ssid.Text = engine.Current.Ssid; };
-            ssidRow.Controls.Add(ssid);
-            ssidRow.Controls.Add(useCurrent);
-            grid.Controls.Add(ssidRow);
+            grid.Controls.Add(Row(ssid, useCurrent));
             string why =
                 engine.AccessDenied ? "Windows is hiding Wi-Fi details until you allow location access, so the list is empty. You can still type the name."
                 : engine.Current == null ? "You're not connected to Wi-Fi right now, so \"Use current network\" is unavailable. You can type the name."
@@ -101,28 +117,44 @@ namespace BSSIDLock
             if (why != null) grid.Controls.Add(Hint(why));
             grid.Controls.Add(Hint("BSSIDLock only acts while you're connected to this network. Windows must already know the network (connect to it once normally)."));
 
+            // Behavior
             grid.Controls.Add(Heading("Behavior"));
-            var intervalRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-            intervalRow.Controls.Add(new Label { Text = "Check every", AutoSize = true, Margin = new Padding(3, 6, 3, 0) });
             interval = new NumericUpDown { Minimum = 3, Maximum = 120, Value = st.IntervalSeconds, Width = 60 };
-            intervalRow.Controls.Add(interval);
-            intervalRow.Controls.Add(new Label { Text = "seconds", AutoSize = true, Margin = new Padding(3, 6, 3, 0) });
-            grid.Controls.Add(intervalRow);
-            startup = new CheckBox { Text = "Start BSSIDLock when I sign in to Windows (in the notification area)", AutoSize = true, Checked = StartWithWindows.IsEnabled, Margin = new Padding(3, 6, 3, 3) };
+            grid.Controls.Add(Row(
+                new Label { Text = "Safety check every", AutoSize = true, Margin = new Padding(3, 6, 3, 0) },
+                interval,
+                new Label { Text = "seconds (Wi-Fi changes are handled instantly)", AutoSize = true, Tag = "subtle", Margin = new Padding(3, 6, 3, 0) }));
+            startup = new CheckBox { Text = "Start BSSIDLock when I sign in to Windows (in the notification area)", AutoSize = true, Checked = StartWithWindows.IsEnabled, Margin = new Padding(3, 8, 3, 3) };
             grid.Controls.Add(startup);
 
+            // Appearance
+            grid.Controls.Add(Heading("Appearance"));
+            appearance = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+            appearance.Items.AddRange(new object[] { "Match Windows", "Light", "Dark" });
+            appearance.SelectedIndex = Math.Max(0, Array.IndexOf(ThemeKeys, st.Theme));
+            appearance.SelectedIndexChanged += (s, e) => Theme.SetPreference(ThemeKeys[appearance.SelectedIndex]);   // live preview
+            grid.Controls.Add(Row(new Label { Text = "Theme", AutoSize = true, Margin = new Padding(3, 6, 8, 0) }, appearance));
+
+            // Updates
+            grid.Controls.Add(Heading("Updates"));
+            autoUpdate = new CheckBox { Text = "Keep BSSIDLock up to date automatically", AutoSize = true, Checked = st.AutoUpdate, Margin = new Padding(3, 0, 3, 3) };
+            grid.Controls.Add(autoUpdate);
+            checkNow = new Button { Text = "Check now", AutoSize = true, Margin = new Padding(3, 4, 8, 0) };
+            checkNow.Click += async (s, e) => await updater.CheckAsync(userInitiated: true);
+            updateStatus = new Label { AutoSize = true, Tag = "subtle", MaximumSize = new Size(340, 0), Margin = new Padding(0, 10, 3, 0) };
+            grid.Controls.Add(Row(checkNow, updateStatus));
+            grid.Controls.Add(Hint("Version " + Updater.Current + ". Updates come only from this project's GitHub releases, are checked against the release checksum, and install in the background."));
+
+            // Manual favorite
             grid.Controls.Add(Heading("Add a favorite by address"));
-            var manualRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-            manual = new TextBox { Width = 200, Font = new Font("Consolas", 9.5F) };
-            var add = new Button { Text = "Add", AutoSize = true };
+            manual = new TextBox { Width = 210, Font = new Font("Consolas", 9.5F) };
+            var add = new Button { Text = "Add", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
             add.Click += (s, e) =>
             {
-                if (engine.AddFavorite(manual.Text)) { manual.Clear(); }
+                if (engine.AddFavorite(manual.Text)) manual.Clear();
                 else MessageBox.Show(this, "That doesn't look like an access point address (e.g. aa:bb:cc:dd:ee:ff).", "BSSIDLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
-            manualRow.Controls.Add(manual);
-            manualRow.Controls.Add(add);
-            grid.Controls.Add(manualRow);
+            grid.Controls.Add(Row(manual, add));
             grid.Controls.Add(Hint("Useful for an access point that's out of range right now."));
 
             var ok = new Button { Text = "Save", DialogResult = DialogResult.OK };
@@ -131,17 +163,35 @@ namespace BSSIDLock
             AcceptButton = ok;
             CancelButton = cancel;
             Controls.Add(grid);
+
+            updater.Changed += OnUpdaterChanged;
+            OnUpdaterChanged(null, EventArgs.Empty);
+        }
+
+        void OnUpdaterChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            checkNow.Enabled = !updater.Busy;
+            updateStatus.Text = updater.Status.Length > 0 ? updater.Status : "";
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            updater.Changed -= OnUpdaterChanged;
+            var st = engine.Settings;
             if (DialogResult == DialogResult.OK)
             {
-                engine.Settings.IntervalSeconds = (int)interval.Value;
+                st.IntervalSeconds = (int)interval.Value;
+                st.AutoUpdate = autoUpdate.Checked;
+                st.Theme = ThemeKeys[appearance.SelectedIndex];
                 try { StartWithWindows.Set(startup.Checked); }
                 catch (Exception ex) { engine.AddLog("Couldn't change \"start with Windows\": " + ex.Message); }
-                engine.Settings.Save();
+                st.Save();
                 engine.SetSsid(ssid.Text);
+            }
+            else
+            {
+                Theme.SetPreference(st.Theme);   // undo the live preview
             }
             base.OnFormClosing(e);
         }
@@ -154,13 +204,14 @@ namespace BSSIDLock
             AutoSize = false;
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = true;
-            ClientSize = new Size(640, 400);
+            ClientSize = new Size(660, 420);
             var log = new TextBox
             {
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
                 Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Consolas", 9F),
                 Text = engine.Log.Count == 0 ? "Nothing yet." : string.Join(Environment.NewLine, Enumerable.Reverse(engine.Log)),
             };
@@ -173,7 +224,7 @@ namespace BSSIDLock
             Controls.Add(log);
             Controls.Add(buttons);
             log.BringToFront();
-            Shown += (s, e) => { log.SelectionStart = 0; log.SelectionLength = 0; };
+            Shown += (s, e) => { log.SelectionStart = 0; log.SelectionLength = 0; Theme.NativeTheme(log, "DarkMode_Explorer"); };
         }
     }
 
@@ -184,8 +235,8 @@ namespace BSSIDLock
         Prompt(string title, string message, string value) : base(title)
         {
             var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
-            grid.Controls.Add(new Label { Text = message, AutoSize = true, MaximumSize = new Size(420, 0), Margin = new Padding(3, 0, 3, 8) });
-            box = new TextBox { Text = value, Width = 380 };
+            grid.Controls.Add(new Label { Text = message, AutoSize = true, MaximumSize = new Size(420, 0), Margin = new Padding(3, 0, 3, 10) });
+            box = new TextBox { Text = value, Width = 400 };
             grid.Controls.Add(box);
             var ok = new Button { Text = "Save", DialogResult = DialogResult.OK };
             var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };

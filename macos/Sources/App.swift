@@ -5,6 +5,13 @@ import SwiftUI
 /// Closing the main window leaves BSSIDLock running in the menu bar only, with no Dock icon.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // After an automatic update, come back quietly in the menu bar.
+        if CommandLine.arguments.contains("--updated") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                for w in NSApp.windows where Self.isDocumentWindow(w) { w.close() }
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
             guard let closing = note.object as? NSWindow, Self.isDocumentWindow(closing) else { return }
             DispatchQueue.main.async {
@@ -31,9 +38,14 @@ struct BSSIDLockApp: App {
             MainView()
                 .environmentObject(engine)
                 .environmentObject(ui)
+                .environmentObject(engine.updater)
         }
         .defaultSize(width: 720, height: 600)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button(engine.updater.actionTitle) { Task { await engine.updater.check(userInitiated: true) } }
+                    .disabled(engine.updater.busy)
+            }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { ui.showSettings = true }
                     .keyboardShortcut(",", modifiers: .command)
@@ -52,6 +64,7 @@ struct BSSIDLockApp: App {
             MenuBarView()
                 .environmentObject(engine)
                 .environmentObject(ui)
+                .environmentObject(engine.updater)
         } label: {
             Image(systemName: engine.isLocked ? "lock.fill" : "lock.open")
         }
@@ -63,6 +76,7 @@ struct BSSIDLockApp: App {
 struct MenuBarView: View {
     @EnvironmentObject var e: Engine
     @EnvironmentObject var ui: UIState
+    @EnvironmentObject var updater: Updater
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -100,6 +114,15 @@ struct MenuBarView: View {
                         e.lockTo(item.bssid)
                     }
                 }
+            }
+
+            if let v = updater.available {
+                Divider()
+                Button { Task { await updater.check(userInitiated: true) } } label: {
+                    Label(updater.busy ? "Updating…" : "Install version \(v)", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(updater.busy)
             }
 
             Divider()

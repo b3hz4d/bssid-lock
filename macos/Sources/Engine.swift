@@ -226,6 +226,7 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
     @Published var busy = false
     @Published var launchAtLogin = false
 
+    let updater = Updater()
     private let lm = CLLocationManager()
     private var retryAfter = Date.distantPast
     private var pendingCheck: Task<Void, Never>?
@@ -248,6 +249,8 @@ final class Engine: NSObject, ObservableObject, CLLocationManagerDelegate, CWEve
         super.init()
 
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        updater.log = { [weak self] message in self?.addLog(message) }
+        if CommandLine.arguments.contains("--updated") { addLog("Updated to version \(Updater.currentVersion)") }
         lm.delegate = self
         locAuth = lm.authorizationStatus
         if locAuth == .notDetermined {

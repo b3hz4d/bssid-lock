@@ -38,6 +38,20 @@ jobs:
           ./install.sh --uninstall --dir="$RUNNER_TEMP/Applications"
           test ! -e "$RUNNER_TEMP/Applications/BSSIDLock.app"
 
+      - name: Test self-signing (throwaway certificate) and launch the signed app
+        run: |
+          cd "$RUNNER_TEMP"
+          printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=BSSIDLock CI Test\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' > ext.cnf
+          /usr/bin/openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes -keyout key.pem -out cert.pem -config ext.cnf 2>/dev/null
+          /usr/bin/openssl pkcs12 -export -inkey key.pem -in cert.pem -out test.p12 -passout pass:ci-test
+          cd "$GITHUB_WORKSPACE"
+          SELFSIGN_P12="$RUNNER_TEMP/test.p12" SELFSIGN_PASSWORD=ci-test ./macos/sign-selfsigned.sh
+          codesign -d -r- macos/build/BSSIDLock.app 2>&1 | grep -q "certificate leaf" || { echo "designated requirement isn't certificate-based"; exit 1; }
+          open macos/build/BSSIDLock.app
+          sleep 10
+          pgrep -f "macos/build/BSSIDLock.app/Contents/MacOS/BSSIDLock" || { echo "self-signed app is not running"; exit 1; }
+          pkill -f "macos/build/BSSIDLock.app/Contents/MacOS/BSSIDLock"
+
       - name: Test install.sh --source
         run: |
           mkdir -p "$RUNNER_TEMP/src" && tar -czf "$RUNNER_TEMP/src/main.tar.gz" --exclude ./.git --exclude ./macos/build -s ',^\.,bssid-lock-main,' .

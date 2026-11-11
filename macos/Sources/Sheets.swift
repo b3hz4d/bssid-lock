@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsSheet: View {
     @EnvironmentObject var e: Engine
     @EnvironmentObject var ui: UIState
+    @EnvironmentObject var updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,6 +67,23 @@ struct SettingsSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
+                Section {
+                    Toggle("Keep BSSIDLock up to date automatically", isOn: $updater.autoUpdate)
+                    HStack {
+                        Button(updater.available.map { "Install Version \($0)" } ?? "Check Now") {
+                            Task { await updater.check(userInitiated: true) }
+                        }
+                        .disabled(updater.busy)
+                        if updater.busy { ProgressView().controlSize(.small) }
+                        Text(updater.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                } header: {
+                    Text("Updates")
+                } footer: {
+                    Text("Version \(Updater.currentVersion). Updates come only from this project's GitHub releases and are verified before installing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
                 Section("Behavior") {
                     Stepper("Check every \(Int(e.interval)) seconds", value: $e.interval, in: 3...120, step: 1)
                     Toggle("Open at login", isOn: Binding(get: { e.launchAtLogin }, set: { e.setLaunchAtLogin($0) }))
@@ -96,7 +114,7 @@ struct SettingsSheet: View {
             }
             .padding(12)
         }
-        .frame(width: 500, height: 560)
+        .frame(width: 520, height: 640)
         .onAppear {
             ui.ssidDraft = e.ssid
             ui.pwDraft = e.password

@@ -6,7 +6,14 @@ Please report security issues privately through **[GitHub Security Advisories](h
 
 ## What BSSIDLock does and doesn't do
 
-- **No network communication.** No telemetry, analytics or auto-update.
+- **Network: update checks only.** No telemetry or analytics.
+  - Once a day, if automatic updates are on (the default), the app asks `api.github.com` for this repository's latest release. That's a plain HTTPS request with a `BSSIDLock/<version>` user agent and no personal data.
+  - Turn it off in Settings → Updates. "Check now" still works on demand.
+- **How updates are verified before installing:**
+  - The file must match the SHA-256 checksum published with the release.
+  - It must report the right product name or bundle ID and the expected version.
+  - **macOS:** the code signature must be valid. Once releases are signed with the project's certificate, an update must be signed by that same certificate, so a tampered release can't be installed.
+  - Updates replace only the app itself, in place: `/Applications` or wherever you installed it on macOS, and `%LOCALAPPDATA%\Programs\BSSIDLock` on Windows. They need no administrator rights.
 - **No elevated privileges.** No administrator rights, drivers, services or daemons.
 - **System access is limited to:**
   - Reading Wi-Fi status and scan results, which requires location permission on modern macOS and Windows.

@@ -27,7 +27,9 @@ BSSIDLock does:
 - **Name your access points** ("Living room", "Office") instead of memorizing addresses.
 - **Stays locked.** It checks every few seconds and switches back if the system roams away.
 - **Only touches the network you choose.** On any other Wi-Fi it does nothing.
-- **Lives in the menu bar (macOS) or notification area (Windows).** Switch the lock target or turn the lock off from there.
+- **Lives in the menu bar (macOS) or notification area (Windows).** Closing the window keeps it running there. One click switches the lock target, with signal strength in dBm for every access point.
+- **Updates itself.** It checks GitHub once a day and installs new versions in the background. You can turn this off.
+- **Light and dark mode** on both platforms. Windows follows your system setting, or you can pick one.
 - **Start at login**, quietly in the background.
 
 ## Install
@@ -46,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh |
 irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1 | iex
 ```
 
-The installer downloads the latest release, checks it against the release's SHA-256 checksums, installs it (to `/Applications`, or `%LOCALAPPDATA%\Programs\BSSIDLock` with a Start menu shortcut on Windows) and opens it. Run the same command again to update.
+The installer downloads the latest release, checks it against the release's SHA-256 checksums, installs it (to `/Applications`, or `%LOCALAPPDATA%\Programs\BSSIDLock` with a Start menu shortcut on Windows) and opens it. After that, BSSIDLock keeps itself up to date. Running the command again also updates it, and your settings are kept.
 
 <details>
 <summary>Other ways to install, and uninstalling</summary>
@@ -83,7 +85,7 @@ Yes, and you can check that yourself:
   gh attestation verify BSSIDLock.exe -R b3hz4d/bssid-lock
   ```
 - **It does very little.**
-  - No network access, telemetry or updater.
+  - No telemetry or analytics. The only network request is the once-a-day update check to GitHub, which you can turn off in Settings. Updates are downloaded only from this repository's releases and verified before installing (see [SECURITY.md](SECURITY.md)).
   - No administrator rights, drivers or background services.
   - It only reads Wi-Fi status and asks the system to join an access point you picked.
   - Settings stay on your computer. The optional macOS Wi-Fi password goes in your Keychain.

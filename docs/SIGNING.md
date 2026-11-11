@@ -48,7 +48,24 @@ False positives happen to small new executables. Submit the file for review; it'
 - Microsoft Defender: <https://www.microsoft.com/wdsi/filesubmission> (choose "Software developer")
 - Check other engines first at <https://www.virustotal.com>, then use each vendor's false-positive form.
 
-## macOS signing and notarization
+## macOS: free self-signed certificate (recommended)
+
+Ad-hoc signatures change with every build, so macOS forgets the Location permission after each automatic update. A free self-signed certificate keeps a stable identity across versions. With it, macOS remembers the permission, and the in-app updater refuses updates that aren't signed by that same certificate. It doesn't remove the Gatekeeper warning for browser downloads (see below), but installer and updater users never see that warning anyway.
+
+1. Create the certificate (once, keep the files safe):
+   ```bash
+   printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=BSSIDLock Release Signing\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' > ext.cnf
+   openssl req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes -keyout key.pem -out cert.pem -config ext.cnf
+   openssl pkcs12 -export -inkey key.pem -in cert.pem -out signing.p12 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+   ```
+2. Add two repository secrets:
+   - `MACOS_SELFSIGN_P12`: run `base64 -i signing.p12`
+   - `MACOS_SELFSIGN_PASSWORD`: the export password
+3. The next release is signed by [`macos/sign-selfsigned.sh`](../macos/sign-selfsigned.sh), which uses [rcodesign](https://github.com/indygreg/apple-platform-rs), pinned by SHA-256.
+
+If you ever lose the certificate, make a new one. Users will be asked for Location access once more after that update.
+
+## macOS signing and notarization (paid)
 
 This needs an [Apple Developer Program](https://developer.apple.com/programs/) membership (US$99/year).
 

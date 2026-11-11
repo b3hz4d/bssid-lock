@@ -24,6 +24,7 @@ jobs:
     runs-on: macos-15
     env:
       HAS_DEVELOPER_ID: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_SELFSIGN: ${{ secrets.MACOS_SELFSIGN_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +51,16 @@ jobs:
         env:
           SIGN_IDENTITY: ${{ env.HAS_DEVELOPER_ID == 'true' && 'Developer ID Application' || '' }}
         run: ./macos/build.sh
+
+      - name: Sign with the project's self-signed certificate (stable identity for updates)
+        if: env.HAS_DEVELOPER_ID != 'true' && env.HAS_SELFSIGN == 'true'
+        env:
+          MACOS_SELFSIGN_P12: ${{ secrets.MACOS_SELFSIGN_P12 }}
+          SELFSIGN_PASSWORD: ${{ secrets.MACOS_SELFSIGN_PASSWORD }}
+        run: |
+          echo "$MACOS_SELFSIGN_P12" | base64 --decode > "$RUNNER_TEMP/selfsign.p12"
+          SELFSIGN_P12="$RUNNER_TEMP/selfsign.p12" ./macos/sign-selfsigned.sh
+          rm -f "$RUNNER_TEMP/selfsign.p12"
 
       - name: Notarize
         if: env.HAS_DEVELOPER_ID == 'true'

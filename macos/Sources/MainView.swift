@@ -4,6 +4,7 @@ import SwiftUI
 struct MainView: View {
     @EnvironmentObject var e: Engine
     @EnvironmentObject var ui: UIState
+    @EnvironmentObject var updater: Updater
 
     var body: some View {
         Group {
@@ -19,7 +20,7 @@ struct MainView: View {
         // Dock icon while the window is open; AppDelegate removes it again when the window closes.
         .onAppear { NSApp.setActivationPolicy(.regular) }
         .sheet(isPresented: $ui.showSettings) {
-            SettingsSheet().environmentObject(e).environmentObject(ui)
+            SettingsSheet().environmentObject(e).environmentObject(ui).environmentObject(updater)
         }
         .sheet(isPresented: $ui.showActivity) {
             ActivitySheet().environmentObject(e).environmentObject(ui)

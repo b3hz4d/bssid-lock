@@ -24,6 +24,11 @@ namespace BSSIDLock
         /// <summary>Friendly names keyed by BSSID.</summary>
         [DataMember] public Dictionary<string, string> Names { get; set; }
         [DataMember] public bool TrayHintShown { get; set; }
+        /// <summary>"system", "light" or "dark".</summary>
+        [DataMember] public string Theme { get; set; }
+        /// <summary>Check GitHub once a day and install new versions automatically.</summary>
+        [DataMember] public bool AutoUpdate { get; set; }
+        [DataMember] public long LastUpdateCheckTicks { get; set; }
 
         public AppSettings() { SetDefaults(); }
 
@@ -38,6 +43,8 @@ namespace BSSIDLock
             LockEnabled = true;
             IntervalSeconds = 10;
             Names = new Dictionary<string, string>();
+            Theme = "system";
+            AutoUpdate = true;
         }
 
         static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BSSIDLock");
@@ -78,6 +85,7 @@ namespace BSSIDLock
             Names = Names ?? new Dictionary<string, string>();
             if (Target != null && !Favorites.Contains(Target)) Target = null;
             if (IntervalSeconds < 3 || IntervalSeconds > 120) IntervalSeconds = 10;
+            if (Theme != "light" && Theme != "dark") Theme = "system";
             return this;
         }
     }
