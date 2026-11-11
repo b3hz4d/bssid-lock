@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.b3hz4d.bssidlock</string>
+	<key>CFBundleName</key>
+	<string>BSSIDLock</string>
+	<key>CFBundleDisplayName</key>
+	<string>BSSIDLock</string>
+	<key>CFBundleExecutable</key>
+	<string>BSSIDLock</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
+	<key>NSLocationUsageDescription</key>
+	<string>macOS only reveals Wi-Fi access point addresses (BSSIDs) to apps with Location access. BSSIDLock never stores or sends your location.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>macOS only reveals Wi-Fi access point addresses (BSSIDs) to apps with Location access. BSSIDLock never stores or sends your location.</string>
+</dict>
+</plist>
