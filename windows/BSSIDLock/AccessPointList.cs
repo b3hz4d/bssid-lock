@@ -26,6 +26,8 @@ namespace BSSIDLock
         int hoverIndex = -1;
         string hoverPart;        // "lock", "star", "up", "down", "more" or null
         bool adjusting;
+        int lastSelected = -1;
+        string rowsKey;
         Font boldFont, smallFont, glyphFont, headerFont;
         Bitmap buffer;   // one reusable paint buffer instead of a new bitmap per row
         // Background behind the row being drawn. Text drawn into a bitmap must be given its real background:
@@ -100,6 +102,12 @@ namespace BSSIDLock
         /// <summary>Replace the rows, keeping the selection and scroll position.</summary>
         public void SetRows(IList<ListRow> rows)
         {
+            // Same rows as before: just repaint (signal, names and pills are read when drawing). Rebuilding the
+            // items would reset and redraw the whole list.
+            string key = string.Join("\n", rows.Select(r => (int)r.Type + "|" + r.Bssid + "|" + r.Rank + "|" + r.Text + "|" + r.Caption));
+            if (key == rowsKey) { Invalidate(); return; }
+            rowsKey = key;
+
             string selected = SelectedBssid;
             int top = TopIndex;
             adjusting = true;
@@ -111,6 +119,7 @@ namespace BSSIDLock
             EndUpdate();
             adjusting = false;
             hoverIndex = -1;
+            lastSelected = SelectedIndex;
         }
 
         // ---------------------------------------------------------------- layout
@@ -412,7 +421,45 @@ namespace BSSIDLock
                 adjusting = false;
             }
             base.OnSelectedIndexChanged(e);
-            Invalidate();   // redraw the hover tools on the newly selected row
+            // Redraw just the rows whose selection changed (they show or hide their tools).
+            if (SelectedIndex != lastSelected)
+            {
+                InvalidateRow(lastSelected);
+                InvalidateRow(SelectedIndex);
+                lastSelected = SelectedIndex;
+            }
+        }
+
+        const int WM_ERASEBKGND = 0x14, WM_LBUTTONDOWN = 0x201, WM_LBUTTONDBLCLK = 0x203;
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_ERASEBKGND)
+            {
+                // Rows paint their whole area themselves, so only clear the empty space below the last one.
+                // Letting the list erase everything first made it flash on every click, hover and refresh.
+                int bottom = Items.Count > 0 ? Math.Max(0, GetItemRectangle(Items.Count - 1).Bottom) : 0;
+                if (bottom < ClientSize.Height)
+                    using (var g = Graphics.FromHdc(m.WParam))
+                    using (var brush = new SolidBrush(BackColor))
+                        g.FillRectangle(brush, 0, bottom, ClientSize.Width, ClientSize.Height - bottom);
+                m.Result = (IntPtr)1;
+                return;
+            }
+            if (m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK)
+            {
+                // Empty space, headers and hints aren't clickable. (Windows would select the last row, and the
+                // selection would then jump to the nearest access point.)
+                long lp = m.LParam.ToInt64();
+                var p = new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
+                int i = IndexFromPoint(p);
+                if (i < 0 || i >= Items.Count || !GetItemRectangle(i).Contains(p) || ((ListRow)Items[i]).Type != ListRow.Kind.AccessPoint)
+                {
+                    Focus();
+                    return;
+                }
+            }
+            base.WndProc(ref m);
         }
     }
 }

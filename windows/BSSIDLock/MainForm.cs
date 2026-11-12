@@ -198,8 +198,7 @@ namespace BSSIDLock
 
             // Pause (a menu of how long), or Resume while paused.
             pauseButton = new UiButton { Glyph = Ui.GlyphPause, Text = "Pause" };
-            pauseMenu = new ContextMenuStrip { Renderer = new MenuRenderer() };
-            pauseMenu.Opened += (s, e) => Theme.RoundCorners(pauseMenu.Handle);
+            pauseMenu = new ThemedMenu();
             foreach (var (text, minutes) in new[] { ("For 15 minutes", 15), ("For 1 hour", 60), ("Until I switch networks", 0) })
             {
                 var m = minutes;
@@ -289,9 +288,8 @@ namespace BSSIDLock
                 int i = list.IndexFromPoint(e.Location);
                 if (i >= 0 && list.Items[i] is ListRow r && r.Type == ListRow.Kind.AccessPoint) list.SelectedIndex = i;
             };
-            listMenu = new ContextMenuStrip { Renderer = new MenuRenderer() };
+            listMenu = new ThemedMenu();
             listMenu.Opening += (s, e) => { e.Cancel = list.SelectedBssid == null; if (!e.Cancel) BuildListMenu(); };
-            listMenu.Opened += (s, e) => Theme.RoundCorners(listMenu.Handle);
             list.ContextMenuStrip = listMenu;
             listHost.Controls.Add(list);
 

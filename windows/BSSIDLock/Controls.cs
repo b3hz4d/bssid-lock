@@ -193,7 +193,7 @@ namespace BSSIDLock
     /// <summary>A button that opens a themed menu of choices and shows the selected one.</summary>
     sealed class DropDownButton : UiButton
     {
-        readonly ContextMenuStrip menu = new ContextMenuStrip { Renderer = new MenuRenderer() };
+        readonly ThemedMenu menu = new ThemedMenu();
         readonly List<KeyValuePair<string, object>> options = new List<KeyValuePair<string, object>>();
         object selected;
 
@@ -206,7 +206,6 @@ namespace BSSIDLock
         public DropDownButton()
         {
             Chevron = true;
-            menu.Opened += (s, e) => Theme.RoundCorners(menu.Handle);
         }
 
         public object SelectedValue

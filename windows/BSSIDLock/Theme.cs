@@ -272,6 +272,21 @@ namespace BSSIDLock
     }
 
     /// <summary>Menu / status bar renderer that follows the theme (flat, no gradients).</summary>
+    /// <summary>
+    /// A context menu in the app's colors with rounded corners from the start. (Rounding the corners after the menu
+    /// is on screen makes it visibly change shape as it opens.)
+    /// </summary>
+    sealed class ThemedMenu : ContextMenuStrip
+    {
+        public ThemedMenu() { Renderer = new MenuRenderer(); }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Theme.RoundCorners(Handle);
+        }
+    }
+
     sealed class MenuRenderer : ToolStripProfessionalRenderer
     {
         public MenuRenderer() : base(new ThemeColors()) { RoundedEdges = false; }

@@ -100,9 +100,8 @@ namespace BSSIDLock
             boldFont = new Font("Segoe UI Semibold", 9.5f);
             smallFont = new Font("Segoe UI", 8.5f);
 
-            menu = new ContextMenuStrip { Renderer = new MenuRenderer(), Font = menuFont, ShowImageMargin = true, ShowCheckMargin = false };
+            menu = new ThemedMenu { Font = menuFont, ShowImageMargin = true, ShowCheckMargin = false };
             menu.Opening += (s, e) => Build();
-            menu.Opened += (s, e) => Theme.RoundCorners(menu.Handle);
 
             icon = new NotifyIcon { Text = "BSSIDLock", ContextMenuStrip = menu };
             // Left click opens the quick menu too (like the macOS menu bar), not just right click.
@@ -214,7 +213,7 @@ namespace BSSIDLock
                 var pause = Item("Pause", null);
                 pause.DropDown.Renderer = new MenuRenderer();
                 pause.DropDown.Font = menuFont;
-                pause.DropDown.Opened += (s, e) => Theme.RoundCorners(pause.DropDown.Handle);
+                pause.DropDown.HandleCreated += (s, e) => Theme.RoundCorners(((Control)s).Handle);
                 pause.DropDownItems.Add(Item("For 15 minutes", () => engine.Pause(15)));
                 pause.DropDownItems.Add(Item("For 1 hour", () => engine.Pause(60)));
                 pause.DropDownItems.Add(Item("Until I switch networks", () => engine.Pause(0)));
