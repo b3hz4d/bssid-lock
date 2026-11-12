@@ -281,7 +281,7 @@ namespace BSSIDLock
         void OnUpdaterChanged(object sender, EventArgs e)
         {
             if (IsDisposed) return;
-            checkNow.Enabled = !updater.Busy;
+            checkNow.Enabled = !updater.Busy && !updater.Installing;
             versionRow.Description = updater.Status.Length > 0 ? updater.Status : "Press “Check now” to look for a new version.";
         }
 

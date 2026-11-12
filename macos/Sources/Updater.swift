@@ -35,6 +35,8 @@ final class Updater: ObservableObject {
     @Published private(set) var status = ""
     @Published private(set) var available: String?
     @Published private(set) var busy = false
+    /// Set once the new version is ready and the app is restarting; blocks a second install.
+    @Published private(set) var installing = false
 
     /// Where to write activity messages (set by the engine).
     var log: (String) -> Void = { _ in }
@@ -45,7 +47,7 @@ final class Updater: ObservableObject {
     }
 
     var actionTitle: String {
-        busy ? "Checking for Updates…" : available.map { "Install Version \($0)" } ?? "Check for Updates…"
+        installing ? "Restarting to Update…" : busy ? "Checking for Updates…" : available.map { "Install Version \($0)" } ?? "Check for Updates…"
     }
 
     private func loop() async {
@@ -59,9 +61,9 @@ final class Updater: ObservableObject {
 
     /// Check now. Installs right away when automatic updates are on, or when the user asked.
     func check(userInitiated: Bool) async {
-        guard !busy else { return }
+        guard !busy, !installing else { return }
         busy = true
-        defer { busy = false }
+        defer { if !installing { busy = false } }
         status = "Checking for updates…"
         do {
             let release = try await Self.fetchLatest()
@@ -74,7 +76,7 @@ final class Updater: ObservableObject {
             }
             available = latest
             if autoUpdate || userInitiated {
-                try await install(release, version: latest)
+                try await install(release, version: latest, userInitiated: userInitiated)
             } else {
                 status = "Version \(latest) is available."
                 log(status)
@@ -106,7 +108,7 @@ final class Updater: ObservableObject {
         return parts(a).lexicographicallyPrecedes(parts(b)) == false && parts(a) != parts(b)
     }
 
-    private func install(_ release: GitHubRelease, version: String) async throws {
+    private func install(_ release: GitHubRelease, version: String, userInitiated: Bool) async throws {
         guard let zipURL = release.asset("BSSIDLock-macOS.zip"), let sumsURL = release.asset("SHA256SUMS.txt") else {
             throw UpdateError("The release is missing its files.")
         }
@@ -139,15 +141,21 @@ final class Updater: ObservableObject {
         let newApp = work.appendingPathComponent("new/BSSIDLock.app")
         try Self.verify(newApp, version: version)
 
-        // 3. Swap after we quit, then relaunch in the menu bar
+        // 3. Swap after we quit, then relaunch. A lock makes sure only one helper ever swaps the app.
+        //    Background updates come back quietly in the menu bar; when you pressed Install, the window reopens.
         let pid = ProcessInfo.processInfo.processIdentifier
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let script = """
         while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done
-        OLD=\(q(bundle.path)); NEW=\(q(newApp.path)); BAK="$OLD.previous"
-        /bin/rm -rf "$BAK"
-        if /bin/mv "$OLD" "$BAK" && /usr/bin/ditto "$NEW" "$OLD"; then /bin/rm -rf "$BAK"; else /bin/rm -rf "$OLD"; /bin/mv "$BAK" "$OLD"; fi
-        /usr/bin/open "$OLD" --args --updated
+        OLD=\(q(bundle.path)); NEW=\(q(newApp.path)); BAK="$OLD.previous"; LOCK="$OLD.updating"
+        /usr/bin/find "$LOCK" -maxdepth 0 -mmin +10 -exec /bin/rmdir {} \\; 2>/dev/null
+        /bin/mkdir "$LOCK" 2>/dev/null || { /bin/rm -rf \(q(work.path)); exit 0; }
+        if [ -d "$NEW" ]; then
+          /bin/rm -rf "$BAK"
+          if /bin/mv "$OLD" "$BAK" && /usr/bin/ditto "$NEW" "$OLD"; then /bin/rm -rf "$BAK"; else /bin/rm -rf "$OLD"; /bin/mv "$BAK" "$OLD"; fi
+        fi
+        /bin/rmdir "$LOCK"
+        /usr/bin/open "$OLD"\(userInitiated ? "" : " --args --updated")
         /bin/rm -rf \(q(work.path))
         """
         let helper = Process()
@@ -155,10 +163,24 @@ final class Updater: ObservableObject {
         helper.arguments = ["-c", script]
         try helper.run()
 
-        status = "Updating to version \(version)…"
+        installing = true
+        status = "Restarting to finish the update to version \(version)…"
         log("Installing version \(version) and restarting")
         try? await Task.sleep(for: .milliseconds(300))
+        Self.quitForUpdate()
+    }
+
+    /// Quit so the helper can swap the app. macOS refuses to quit while a sheet (like Settings) is open,
+    /// so close sheets first, and make sure we really exit even if something else holds the app open.
+    static func quitForUpdate() {
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
         NSApp.terminate(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            UserDefaults.standard.synchronize()
+            exit(0)
+        }
     }
 
     nonisolated static func run(_ tool: String, _ args: [String]) async throws {

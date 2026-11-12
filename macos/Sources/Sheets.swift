@@ -127,10 +127,10 @@ struct SettingsSheet: View {
                 Section {
                     Toggle("Keep BSSIDLock up to date automatically", isOn: $updater.autoUpdate)
                     HStack {
-                        Button(updater.available.map { "Install Version \($0)" } ?? "Check Now") {
+                        Button(updater.installing ? "Restarting…" : updater.available.map { "Install Version \($0)" } ?? "Check Now") {
                             Task { await updater.check(userInitiated: true) }
                         }
-                        .disabled(updater.busy)
+                        .disabled(updater.busy || updater.installing)
                         if updater.busy { ProgressView().controlSize(.small) }
                         Text(updater.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }

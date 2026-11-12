@@ -474,6 +474,8 @@ namespace BSSIDLock
                 return;
             }
             ExitApp();
+            // The new copy waits for this one to exit; make sure we really do, even if a dialog is open.
+            new System.Threading.Timer(_ => Environment.Exit(0), null, 3000, System.Threading.Timeout.Infinite);
         }
 
         void ExitApp()

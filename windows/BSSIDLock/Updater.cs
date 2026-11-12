@@ -49,6 +49,8 @@ namespace BSSIDLock
         public string Status { get; private set; } = "";
         public string AvailableVersion { get; private set; }
         public bool Busy { get; private set; }
+        /// <summary>The new exe is in place and the app is restarting; blocks a second install.</summary>
+        public bool Installing { get; private set; }
 
         public Updater(Engine engine) { this.engine = engine; }
 
@@ -58,14 +60,14 @@ namespace BSSIDLock
         }
 
         public string MenuText =>
-            Busy ? "Checking for updates…" : AvailableVersion != null ? "Install version " + AvailableVersion : "Check for updates";
+            Installing ? "Restarting to update…" : Busy ? "Checking for updates…" : AvailableVersion != null ? "Install version " + AvailableVersion : "Check for updates";
 
         void Raise() => Changed?.Invoke(this, EventArgs.Empty);
 
         /// <summary>Called periodically: checks once a day when automatic updates are on.</summary>
         public async Task MaybeCheckAsync()
         {
-            if (!engine.Settings.AutoUpdate || Busy) return;
+            if (!engine.Settings.AutoUpdate || Busy || Installing) return;
             var last = new DateTime(Math.Max(0, engine.Settings.LastUpdateCheckTicks), DateTimeKind.Utc);
             if (DateTime.UtcNow - last < CheckEvery) return;
             await CheckAsync(userInitiated: false);
@@ -74,7 +76,7 @@ namespace BSSIDLock
         /// <summary>Check now. Installs right away if automatic updates are on, or if the user asked.</summary>
         public async Task CheckAsync(bool userInitiated)
         {
-            if (Busy) return;
+            if (Busy || Installing) return;
             Busy = true;
             Status = "Checking for updates…";
             Raise();
@@ -108,7 +110,7 @@ namespace BSSIDLock
             }
             finally
             {
-                Busy = false;
+                if (!Installing) Busy = false;
                 Raise();
             }
         }
@@ -195,6 +197,7 @@ namespace BSSIDLock
             try { File.Move(download, exe); }
             catch { File.Move(old, exe); throw; }
 
+            Installing = true;
             Status = "Updated to version " + version + ". Restarting…";
             engine.AddLog(Status);
             Raise();

@@ -52,7 +52,7 @@ struct BSSIDLockApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 Button(engine.updater.actionTitle) { Task { await engine.updater.check(userInitiated: true) } }
-                    .disabled(engine.updater.busy)
+                    .disabled(engine.updater.busy || engine.updater.installing)
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { ui.showSettings = true }
@@ -127,10 +127,10 @@ struct MenuBarView: View {
             if let v = updater.available {
                 Divider()
                 Button { Task { await updater.check(userInitiated: true) } } label: {
-                    Label(updater.busy ? "Updating…" : "Install version \(v)", systemImage: "arrow.down.circle.fill")
+                    Label(updater.installing ? "Restarting…" : updater.busy ? "Updating…" : "Install version \(v)", systemImage: "arrow.down.circle.fill")
                 }
                 .buttonStyle(.borderless)
-                .disabled(updater.busy)
+                .disabled(updater.busy || updater.installing)
             }
 
             Divider()
