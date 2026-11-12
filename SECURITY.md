@@ -14,6 +14,8 @@ Please report security issues privately through **[GitHub Security Advisories](h
   - It must report the right product name or bundle ID and the expected version.
   - **macOS:** the code signature must be valid. Once releases are signed with the project's certificate, an update must be signed by that same certificate, so a tampered release can't be installed.
   - Updates replace only the app itself, in place: `/Applications` or wherever you installed it on macOS, and `%LOCALAPPDATA%\Programs\BSSIDLock` on Windows. They need no administrator rights.
+  - **Installed with winget:** the app doesn't replace itself. Once the new version is in winget's catalog (it asks `api.github.com` whether `microsoft/winget-pkgs` has it), it exits and runs `winget upgrade b3hz4d.BSSIDLock`, so winget does the download and its own checks, then starts again.
+- **Activity log:** what the app did (network changes, switches, errors) is saved on your computer only: `~/Library/Application Support/BSSIDLock/activity.log` on macOS, `%APPDATA%\BSSIDLock\activity.log` on Windows. It's never sent anywhere.
 - **No elevated privileges.** No administrator rights, drivers, services or daemons.
 - **System access is limited to:**
   - Reading Wi-Fi status and scan results, which requires location permission on modern macOS and Windows.

@@ -24,14 +24,13 @@ jobs:
         shell: bash
         run: ./winget/make-manifests.sh "${{ inputs.version }}" winget-out
 
-      - name: Make sure winget is available
+      - name: Get the latest winget
         shell: powershell
         run: |
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Install-PackageProvider -Name NuGet -Force | Out-Null
-            Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery
-            Repair-WinGetPackageManager -AllUsers -Latest
-          }
+          # The runner image's winget can be older than the manifest schema winget-pkgs uses now.
+          Install-PackageProvider -Name NuGet -Force | Out-Null
+          Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery
+          Repair-WinGetPackageManager -AllUsers -Latest -Force
           winget --version
 
       - name: Validate and install
