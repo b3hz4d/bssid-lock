@@ -2,6 +2,9 @@
 #
 #   irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1 | iex
 #
+# A specific version:
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1))) -Version 1.2.0
+#
 # Uninstall:
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1))) -Uninstall
 #
@@ -11,16 +14,20 @@
 # Why there's no warning: SmartScreen only checks files that a browser marked as "downloaded from the
 # internet". Files fetched by PowerShell don't carry that mark. Microsoft Defender still scans the file
 # as usual. This script is short; read it before running it.
-param([switch]$Uninstall, [switch]$NoStart)
+param([switch]$Uninstall, [switch]$NoStart, [string]$Version = '')
 
 & {
-    param([bool]$Uninstall, [bool]$NoStart)
+    param([bool]$Uninstall, [bool]$NoStart, [string]$Version)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'   # much faster downloads on Windows PowerShell 5.1
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     $repo = 'b3hz4d/bssid-lock'
-    $baseUrl = if ($env:BSSIDLOCK_BASE_URL) { $env:BSSIDLOCK_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
+    $Version = $Version.TrimStart('v', 'V')
+    if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version should look like 1.2.0 (got '$Version')." }
+    $baseUrl = if ($env:BSSIDLOCK_BASE_URL) { $env:BSSIDLOCK_BASE_URL }
+               elseif ($Version) { "https://github.com/$repo/releases/download/v$Version" }
+               else { "https://github.com/$repo/releases/latest/download" }
     $installDir = if ($env:BSSIDLOCK_INSTALL_DIR) { $env:BSSIDLOCK_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\BSSIDLock' }
     $exe = Join-Path $installDir 'BSSIDLock.exe'
     $programs = [Environment]::GetFolderPath('Programs')
@@ -48,7 +55,7 @@ param([switch]$Uninstall, [switch]$NoStart)
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('bssidlock-' + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
-        Say 'Downloading the latest BSSIDLock release...'
+        Say ('Downloading BSSIDLock ' + $(if ($Version) { $Version } else { '(latest release)' }) + '...')
         try {
             Invoke-WebRequest "$baseUrl/BSSIDLock.exe" -OutFile (Join-Path $tmp 'BSSIDLock.exe') -UseBasicParsing
             Invoke-WebRequest "$baseUrl/SHA256SUMS.txt" -OutFile (Join-Path $tmp 'SHA256SUMS.txt') -UseBasicParsing
@@ -91,4 +98,4 @@ param([switch]$Uninstall, [switch]$NoStart)
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
-} $Uninstall.IsPresent $NoStart.IsPresent
+} $Uninstall.IsPresent $NoStart.IsPresent $Version

@@ -52,6 +52,11 @@ jobs:
           pgrep -f "macos/build/BSSIDLock.app/Contents/MacOS/BSSIDLock" || { echo "self-signed app is not running"; exit 1; }
           pkill -f "macos/build/BSSIDLock.app/Contents/MacOS/BSSIDLock"
 
+      - name: Test install.sh --version (real published release)
+        run: |
+          BSSIDLOCK_NO_OPEN=1 ./install.sh --version=1.2.0 --dir="$RUNNER_TEMP/Pinned"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RUNNER_TEMP/Pinned/BSSIDLock.app/Contents/Info.plist")" = "1.2.0"
+
       - name: Test install.sh --source
         run: |
           mkdir -p "$RUNNER_TEMP/src" && tar -czf "$RUNNER_TEMP/src/main.tar.gz" --exclude ./.git --exclude ./macos/build -s ',^\.,bssid-lock-main,' .
@@ -147,8 +152,8 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
           }
           foreach ($theme in 'dark', 'light') {
-            '{"Ssid":"","Favorites":[],"Target":null,"LockEnabled":true,"IntervalSeconds":10,"Names":{},"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":true}' |
-              Set-Content (Join-Path $settingsDir 'settings.json') -Encoding UTF8
+            $json = '{"Ssid":"","Favorites":[],"Target":null,"LockEnabled":true,"IntervalSeconds":10,"Names":{},"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":true}'
+            [IO.File]::WriteAllText((Join-Path $settingsDir 'settings.json'), $json)
             foreach ($mode in 'main', 'settings') {
               if ($mode -eq 'settings') { $p = Start-Process $exe -ArgumentList '--open-settings' -PassThru }
               else { $p = Start-Process $exe -PassThru }

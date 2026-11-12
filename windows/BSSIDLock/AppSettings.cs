@@ -64,8 +64,12 @@ namespace BSSIDLock
             try
             {
                 if (File.Exists(FilePath))
-                    using (var fs = File.OpenRead(FilePath))
-                        return ((AppSettings)Serializer().ReadObject(fs)).Normalize();
+                {
+                    var bytes = File.ReadAllBytes(FilePath);
+                    int skip = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;   // UTF-8 BOM
+                    using (var ms = new MemoryStream(bytes, skip, bytes.Length - skip))
+                        return ((AppSettings)Serializer().ReadObject(ms)).Normalize();
+                }
             }
             catch (Exception) { /* unreadable settings: start fresh */ }
             return new AppSettings();

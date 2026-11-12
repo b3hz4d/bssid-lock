@@ -58,6 +58,7 @@ The installer downloads the latest release, checks it against the release's SHA-
 - **Manual download:** get `BSSIDLock-macOS.zip` or `BSSIDLock.exe` from [Releases](https://github.com/b3hz4d/bssid-lock/releases/latest). Files downloaded with a browser show an "unknown developer" warning the first time.
   - **macOS:** open the app, then go to System Settings → Privacy & Security → **Open Anyway**.
   - **Windows:** **More info** → **Run anyway**.
+- **A specific version:** add `--version=1.2.0` on macOS (`… | bash -s -- --version=1.2.0`), or use `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1))) -Version 1.2.0` on Windows. Turn off automatic updates in Settings if you want to stay on it. Versions are listed on the [Releases](https://github.com/b3hz4d/bssid-lock/releases) page.
 - **Uninstall on macOS:** `curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh | bash -s -- --uninstall`
 - **Uninstall on Windows:** `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.ps1))) -Uninstall`
 

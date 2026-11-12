@@ -4,6 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/b3hz4d/bssid-lock/main/install.sh | bash
 #
 # Options (pass after "bash -s --"):
+#   --version=1.2.0  install that version instead of the latest one
 #   --source       build from source on this Mac instead of downloading the release
 #   --uninstall    remove BSSIDLock and its settings
 #   --dir=PATH     install somewhere other than /Applications
@@ -19,6 +20,7 @@ BASE_URL="${BSSIDLOCK_BASE_URL:-https://github.com/$REPO/releases/latest/downloa
 SOURCE_URL="${BSSIDLOCK_SOURCE_URL:-https://github.com/$REPO/archive/refs/heads/main.tar.gz}"
 MODE=download
 DEST=""
+VERSION=""
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -28,10 +30,17 @@ for arg in "$@"; do
     --source) MODE=source ;;
     --uninstall) MODE=uninstall ;;
     --dir=*) DEST="${arg#--dir=}" ;;
+    --version=*) VERSION="${arg#--version=}"; VERSION="${VERSION#v}" ;;
     -h|--help) sed -n '2,13p' "$0" 2>/dev/null || true; exit 0 ;;
     *) die "Unknown option: $arg" ;;
   esac
 done
+
+if [[ -n "$VERSION" ]]; then
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Version should look like 1.2.0 (got \"$VERSION\")."
+  BASE_URL="${BSSIDLOCK_BASE_URL:-https://github.com/$REPO/releases/download/v$VERSION}"
+  SOURCE_URL="${BSSIDLOCK_SOURCE_URL:-https://github.com/$REPO/archive/refs/tags/v$VERSION.tar.gz}"
+fi
 
 [[ "$(uname -s)" == "Darwin" ]] || die "This installer is for macOS. On Windows, use install.ps1 (see the README)."
 major="$(sw_vers -productVersion | cut -d. -f1)"
@@ -61,9 +70,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 if [[ "$MODE" == "download" ]]; then
-  say "Downloading the latest BSSIDLock release…"
+  say "Downloading BSSIDLock ${VERSION:-(latest release)}…"
   curl -fsSL "$BASE_URL/BSSIDLock-macOS.zip" -o "$WORK/BSSIDLock-macOS.zip" \
-    || die "Download failed. If no release is published yet, build from source instead: … | bash -s -- --source"
+    || die "Download failed.${VERSION:+ Is v$VERSION a published release? See https://github.com/$REPO/releases}"
   curl -fsSL "$BASE_URL/SHA256SUMS.txt" -o "$WORK/SHA256SUMS.txt" || die "Couldn't download the checksum file."
 
   expected="$(awk '$2 == "BSSIDLock-macOS.zip" { print $1 }' "$WORK/SHA256SUMS.txt")"
