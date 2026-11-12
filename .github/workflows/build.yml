@@ -151,18 +151,33 @@ jobs:
             $bmp.Save((Join-Path (Resolve-Path shots) "$name.png"))
             $g.Dispose(); $bmp.Dispose()
           }
-          foreach ($theme in 'dark', 'light') {
-            $json = '{"Ssid":"","Favorites":[],"Target":null,"LockEnabled":true,"IntervalSeconds":10,"Names":{},"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":true}'
+          # Made-up Wi-Fi (--demo) so the window shows real content; runners have no Wi-Fi adapter.
+          $names = '"Names":{"a0:b1:c2:d3:e4:01":"Meeting room","a0:b1:c2:d3:e4:02":"Desk"}'
+          $networks = '"Networks":[{"Ssid":"Office","Favorites":["a0:b1:c2:d3:e4:02","a0:b1:c2:d3:e4:01"],"Target":null},{"Ssid":"Home","Favorites":[],"Target":null}],"Ssid":"Office"'
+          function Run($name, $json, $extra) {
             [IO.File]::WriteAllText((Join-Path $settingsDir 'settings.json'), $json)
-            foreach ($mode in 'main', 'settings') {
-              if ($mode -eq 'settings') { $p = Start-Process $exe -ArgumentList '--open-settings' -PassThru }
-              else { $p = Start-Process $exe -PassThru }
-              Start-Sleep -Seconds 8
-              Shot "$mode-$theme"
-              Stop-Process -Id $p.Id -Force
-              Start-Sleep -Seconds 1
-            }
+            $argList = @('--demo') + $extra
+            $p = Start-Process $exe -ArgumentList $argList -PassThru
+            Start-Sleep -Seconds 8
+            Shot $name
+            Stop-Process -Id $p.Id -Force
+            Start-Sleep -Seconds 1
           }
+          foreach ($theme in 'dark', 'light') {
+            $common = '"LockEnabled":true,"IntervalSeconds":10,"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":false'
+            $json = '{' + $networks + ',' + $names + ',' + $common + ',"WeakThreshold":-75}'
+            Run "main-$theme" $json @()
+            Run "settings-$theme" $json @('--open-settings')
+          }
+          # Paused until the network changes (the demo PC is on "Office").
+          Run 'paused-dark' ('{' + $networks + ',' + $names + ',"LockEnabled":true,"IntervalSeconds":10,"TrayHintShown":true,"Theme":"dark","AutoUpdate":false,"NotifyChanges":false,"PausedUntilTicks":3155378975999999999,"PauseNetwork":"Office"}') @()
+          # A settings file from version 1.3 (one network) must carry over.
+          Run 'migrated-light' ('{"Ssid":"Office","Favorites":["a0:b1:c2:d3:e4:01"],"Target":"a0:b1:c2:d3:e4:01","LockEnabled":true,"IntervalSeconds":10,' + $names + ',"TrayHintShown":true,"Theme":"light","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":false}') @()
+          $migrated = Get-Content (Join-Path $settingsDir 'settings.json') -Raw | ConvertFrom-Json
+          if ($migrated.Networks.Count -ne 1 -or $migrated.Networks[0].Ssid -ne 'Office' -or $migrated.Networks[0].Target -ne 'a0:b1:c2:d3:e4:01') { $migrated | ConvertTo-Json -Depth 5; throw 'settings from 1.3 were not migrated' }
+          $log = Join-Path $settingsDir 'error.log'
+          if (Test-Path $log) { Get-Content $log; throw 'BSSIDLock wrote an error log' }
+          if (-not (Test-Path (Join-Path $settingsDir 'activity.log'))) { throw 'activity log was not saved' }
           Get-ChildItem shots
 
       - uses: actions/upload-artifact@v7

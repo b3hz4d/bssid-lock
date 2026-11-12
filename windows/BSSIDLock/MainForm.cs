@@ -21,13 +21,17 @@ namespace BSSIDLock
         bool exiting;
         bool updating;
         bool uiPending;
-        string optionsSignature;
+        string optionsSignature, networksSignature;
 
         // Header
         StatusBadge badge;
         TitleBlock heading;
         ToggleSwitch lockSwitch;
+        UiButton pauseButton;
+        ContextMenuStrip pauseMenu;
+        HStack headerControls;
         // Toolbar
+        DropDownButton network;
         Label lockToLabel;
         DropDownButton lockTo;
         UiButton scanButton;
@@ -40,7 +44,7 @@ namespace BSSIDLock
         Label footer, versionLabel;
         LinkLabel updateLink;
 
-        public MainForm(Engine engine, bool startHidden, bool justUpdated)
+        public MainForm(Engine engine, bool startHidden, bool justUpdated, Version wingetUpgradedFrom = null)
         {
             this.engine = engine;
             this.startHidden = startHidden;
@@ -52,8 +56,8 @@ namespace BSSIDLock
             Text = "BSSIDLock";
             Icon = AppIcon.Load(small: false);
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(840, 600);
-            MinimumSize = new Size(700, 480);
+            ClientSize = new Size(880, 600);
+            MinimumSize = new Size(800, 480);
 
             BuildLayout();
             ResumeLayout(false);
@@ -67,9 +71,10 @@ namespace BSSIDLock
             tray.UpdateRequested += async () => await updater.CheckAsync(userInitiated: true);
 
             engine.Changed += (s, e) => RequestUi();
-            engine.NetworkChanged += (t, body) => { if (engine.Settings.NotifyChanges) tray.ShowBalloon(t, body); };
+            engine.NetworkChanged += OnNetworkChanged;
             updater.Changed += (s, e) => RequestUi();
             updater.RestartRequested += RestartInto;
+            updater.WingetUpgradeRequested += UpgradeWithWinget;
             Theme.Changed += (s, e) => { if (InvokeRequired) BeginInvoke((Action)ApplyTheme); else ApplyTheme(); };
 
             timer = new Timer { Interval = 500 };
@@ -99,12 +104,34 @@ namespace BSSIDLock
                 engine.AddLog("Updated to version " + Updater.Current);
                 if (startHidden) tray.ShowBalloon("BSSIDLock was updated", "You're now on version " + Updater.Current + ".");
             }
+            else if (wingetUpgradedFrom != null)
+            {
+                if (Updater.Current > wingetUpgradedFrom)
+                {
+                    engine.AddLog("Updated to version " + Updater.Current + " with winget");
+                    if (startHidden) tray.ShowBalloon("BSSIDLock was updated", "You're now on version " + Updater.Current + ".");
+                }
+                else engine.AddLog("winget didn't update BSSIDLock (still version " + Updater.Current + "). Try \"winget upgrade " + Updater.WingetId + "\".");
+            }
 
             ApplyTheme();
             UpdateUi();
         }
 
         bool Viewing => Visible && WindowState != FormWindowState.Minimized;
+
+        /// <summary>Notify about a network change. Clicking the notification does the most useful next step
+        /// (Windows' notification-area balloons can't have buttons).</summary>
+        void OnNetworkChanged(NetworkChange c)
+        {
+            if (!engine.Settings.NotifyChanges) return;
+            if (c.NewNetwork && !c.Managed)
+                tray.ShowBalloon(c.Title, c.Body + "\nClick to manage this network too.", () => engine.AddNetwork(c.Ssid));
+            else if (c.Roamed && c.Managed)
+                tray.ShowBalloon(c.Title, c.Body + "\nClick to lock to it.", () => { engine.ShowNetwork(c.Ssid); engine.LockTo(c.Bssid); });
+            else
+                tray.ShowBalloon(c.Title, c.Body, ShowFromTray);
+        }
 
         /// <summary>Coalesce bursts of change notifications into one UI update.</summary>
         void RequestUi()
@@ -165,13 +192,31 @@ namespace BSSIDLock
 
             heading = new TitleBlock { Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0) };
 
-            lockSwitch = new ToggleSwitch { Text = "Lock", Font = new Font("Segoe UI Semibold", 11F), Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
+            lockSwitch = new ToggleSwitch { Text = "Lock", Font = new Font("Segoe UI Semibold", 11F) };
             lockSwitch.CheckedChanged += (s, e) => { if (!updating) engine.SetLockEnabled(lockSwitch.Checked); };
             new ToolTip().SetToolTip(lockSwitch, "When on, BSSIDLock keeps you on the access point(s) you chose");
 
+            // Pause (a menu of how long), or Resume while paused.
+            pauseButton = new UiButton { Glyph = Ui.GlyphPause, Text = "Pause" };
+            pauseMenu = new ContextMenuStrip { Renderer = new MenuRenderer() };
+            pauseMenu.Opened += (s, e) => Theme.RoundCorners(pauseMenu.Handle);
+            foreach (var (text, minutes) in new[] { ("For 15 minutes", 15), ("For 1 hour", 60), ("Until I switch networks", 0) })
+            {
+                var m = minutes;
+                pauseMenu.Items.Add(new ToolStripMenuItem(text, null, (s, e) => engine.Pause(m)) { Padding = new Padding(0, 4, 0, 4) });
+            }
+            pauseButton.Click += (s, e) =>
+            {
+                if (engine.IsPaused) { engine.Resume(); return; }
+                pauseMenu.Font = Font;
+                pauseMenu.Show(pauseButton, new Point(0, pauseButton.Height + Ui.S(pauseButton, 2)));
+            };
+            new ToolTip().SetToolTip(pauseButton, "Let Windows choose the access point for a while");
+            headerControls = new HStack(pauseButton, lockSwitch) { AutoSize = true, Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
+
             header.Controls.Add(badge, 0, 0);
             header.Controls.Add(heading, 1, 0);
-            header.Controls.Add(lockSwitch, 2, 0);
+            header.Controls.Add(headerControls, 2, 0);
             return header;
         }
 
@@ -181,10 +226,35 @@ namespace BSSIDLock
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
+            // Which network's access points the window shows (each network has its own favorites).
+            network = new DropDownButton { Glyph = Ui.GlyphWifi, MinWidth = 140, Placeholder = "Networks", EmptyText = "No networks yet" };
+            network.SelectionChanged += (s, e) =>
+            {
+                if (network.SelectedValue is string n) engine.ShowNetwork(n);
+                networksSignature = null;   // show just the name on the button again
+                RequestUi();
+            };
+            network.ExtraItems = () =>
+            {
+                var items = new List<ToolStripItem>();
+                var current = engine.Current?.Ssid;
+                if (!string.IsNullOrEmpty(current) && !engine.Settings.Manages(current))
+                {
+                    var add = new ToolStripMenuItem("Manage “" + current + "” too") { Padding = new Padding(0, 4, 0, 4) };
+                    add.Click += (s, e) => engine.AddNetwork(current);
+                    items.Add(add);
+                }
+                var manage = new ToolStripMenuItem("Manage networks…") { Padding = new Padding(0, 4, 0, 4) };
+                manage.Click += (s, e) => OpenSettings();
+                items.Add(manage);
+                return items;
+            };
+            new ToolTip().SetToolTip(network, "Each network has its own favorites. BSSIDLock follows you to whichever one you join.");
+
             lockToLabel = new Label { Text = "Lock to", AutoSize = true, Tag = "theme:skip" };
-            lockTo = new DropDownButton { MinWidth = 240, EmptyText = "Star access points to add them here" };
+            lockTo = new DropDownButton { MinWidth = 220, EmptyText = "Star access points to add them here" };
             lockTo.SelectionChanged += (s, e) => engine.SetTarget(lockTo.SelectedValue as string);
-            var left = new HStack(lockToLabel, lockTo) { AutoSize = true, Margin = new Padding(0), Anchor = AnchorStyles.Left };
+            var left = new HStack(network, new Gap(10), lockToLabel, lockTo) { AutoSize = true, Margin = new Padding(0), Anchor = AnchorStyles.Left };
 
             var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Right };
             scanButton = new UiButton { Glyph = Ui.GlyphRefresh, Text = "Scan" };
@@ -273,6 +343,27 @@ namespace BSSIDLock
                 heading.Title = engine.Title;
                 heading.Detail = engine.Detail;
                 lockSwitch.Checked = st.LockEnabled;
+                bool paused = engine.IsPaused;
+                string pauseText = paused ? "Resume" : "Pause";
+                if (pauseButton.Visible != st.LockEnabled || pauseButton.Text != pauseText)
+                {
+                    pauseButton.Visible = st.LockEnabled;
+                    pauseButton.Text = pauseText;
+                    pauseButton.Glyph = paused ? Ui.GlyphPlay : Ui.GlyphPause;
+                    pauseButton.Style = paused ? UiButton.Kind.Primary : UiButton.Kind.Secondary;
+                    headerControls.PerformLayout();
+                    headerControls.Parent?.PerformLayout();
+                }
+
+                string netSig = string.Join("|", st.Networks.Select(n => n.Ssid)) + "#" + st.Ssid + "#" + engine.Current?.Ssid;
+                if (netSig != networksSignature)
+                {
+                    networksSignature = netSig;
+                    network.SetOptions(st.Networks.Select(n => new KeyValuePair<string, object>(
+                        n.Ssid + (engine.Current != null && engine.Current.Ssid == n.Ssid ? "  (connected)" : ""), n.Ssid)));
+                    network.SelectedValue = st.Ssid;
+                    if (st.Networks.Count > 0) SetText(network, st.Ssid);   // the button shows just the name
+                }
 
                 string optSig = string.Join("|", st.Favorites.Select(engine.Label)) + "#" + st.Target;
                 if (optSig != optionsSignature)
@@ -308,7 +399,7 @@ namespace BSSIDLock
             string key =
                 engine.AccessDenied ? "denied"
                 : engine.LastError != null && engine.Current == null ? "error:" + engine.LastError
-                : st.Ssid.Length == 0 ? "choose:" + engine.Current?.Ssid
+                : st.Networks.Count == 0 ? "choose:" + engine.Current?.Ssid
                 : null;
 
             if (key != emptyKey)
@@ -338,7 +429,7 @@ namespace BSSIDLock
                     var buttons = new List<UiButton>();
                     if (!string.IsNullOrEmpty(current))
                     {
-                        buttons.Add(MakeButton("Use “" + current + "”", UiButton.Kind.Primary, () => engine.SetSsid(current)));
+                        buttons.Add(MakeButton("Use “" + current + "”", UiButton.Kind.Primary, () => engine.AddNetwork(current)));
                         buttons.Add(MakeButton("Choose another…", UiButton.Kind.Secondary, OpenSettings));
                     }
                     else buttons.Add(MakeButton("Choose network…", UiButton.Kind.Primary, OpenSettings));
@@ -387,16 +478,20 @@ namespace BSSIDLock
                 rows.Add(new ListRow { Type = ListRow.Kind.AccessPoint, Bssid = st.Favorites[i], Rank = i });
 
             rows.Add(new ListRow { Type = ListRow.Kind.Header, Text = "Other access points on “" + st.Ssid + "”" });
-            var others = engine.Visible.Where(v => !st.Favorites.Contains(v.Bssid)).ToList();
+            var onNetwork = engine.Visible.Where(v => v.Ssid == st.Ssid).Select(v => v.Bssid).ToList();
+            // The access point we're on, even if the last scan missed it.
+            if (engine.Current != null && engine.Current.Ssid == st.Ssid && !onNetwork.Contains(engine.Current.Bssid))
+                onNetwork.Insert(0, engine.Current.Bssid);
+            var others = onNetwork.Where(b => !st.Favorites.Contains(b)).ToList();
             if (others.Count == 0)
                 rows.Add(new ListRow
                 {
                     Type = ListRow.Kind.Hint,
                     Text = engine.Busy ? "Scanning…"
-                        : engine.Visible.Count == 0 ? "No access points found yet. Press Scan."
+                        : onNetwork.Count == 0 ? "No access points found yet. Press Scan."
                         : "Every access point in range is already a favorite.",
                 });
-            rows.AddRange(others.Select(ap => new ListRow { Type = ListRow.Kind.AccessPoint, Bssid = ap.Bssid }));
+            rows.AddRange(others.Select(b => new ListRow { Type = ListRow.Kind.AccessPoint, Bssid = b }));
 
             list.SetRows(rows);
         }
@@ -478,6 +573,18 @@ namespace BSSIDLock
             new System.Threading.Timer(_ => Environment.Exit(0), null, 3000, System.Threading.Timeout.Infinite);
         }
 
+        void UpgradeWithWinget()
+        {
+            try { Updater.StartWingetUpgrade(startHidden: !Visible); }
+            catch (Exception ex)
+            {
+                engine.AddLog("Couldn't start winget: " + ex.Message);
+                return;
+            }
+            ExitApp();
+            new System.Threading.Timer(_ => Environment.Exit(0), null, 3000, System.Threading.Timeout.Infinite);
+        }
+
         void ExitApp()
         {
             exiting = true;
@@ -530,6 +637,14 @@ namespace BSSIDLock
             if (d.TotalMinutes < 60) return (int)d.TotalMinutes + " min ago";
             return "at " + t.ToString("t");
         }
+    }
+
+    /// <summary>Fixed horizontal space inside an HStack.</summary>
+    sealed class Gap : Control
+    {
+        readonly int width;
+        public Gap(int designWidth) { width = designWidth; TabStop = false; }
+        public override Size GetPreferredSize(Size proposedSize) => new Size(Ui.S(this, width), 1);
     }
 
     /// <summary>Round tinted badge showing the lock state (matches the macOS app).</summary>

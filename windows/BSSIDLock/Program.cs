@@ -41,12 +41,17 @@ namespace BSSIDLock
                 Application.ThreadException += (s, e) => ReportCrash(e.Exception, fatal: false);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => ReportCrash(e.ExceptionObject as Exception, fatal: true);
 
+                // "--demo": made-up Wi-Fi, for screenshots on machines without Wi-Fi.
+                if (args.Contains("--demo")) Native.DemoWifi.On = true;
                 var settings = AppSettings.Load();
                 Theme.Init(settings.Theme);
                 Updater.CleanUpOldVersions();
                 var engine = new Engine(settings);
                 bool minimized = args.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase));
-                var form = new MainForm(engine, startHidden: minimized, justUpdated: updatedFrom > 0);
+                Version wingetFrom = null;
+                for (int i = 0; i + 1 < args.Length; i++)
+                    if (args[i] == "--after-winget") Version.TryParse(args[i + 1], out wingetFrom);
+                var form = new MainForm(engine, startHidden: minimized, justUpdated: updatedFrom > 0, wingetUpgradedFrom: wingetFrom);
                 if (args.Contains("--open-settings")) form.Shown += (s, e) => form.BeginInvoke((Action)form.OpenSettingsFromCommandLine);
 
                 var listener = new Thread(() =>

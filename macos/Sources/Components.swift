@@ -15,6 +15,7 @@ final class UIState: ObservableObject {
     @Published var manualBSSID = ""
     @Published var customInterval = false
     @Published var intervalText = ""
+    @Published var removingNetwork: String?
 
     func startRename(_ bssid: String, current: String?) {
         renameText = current ?? ""

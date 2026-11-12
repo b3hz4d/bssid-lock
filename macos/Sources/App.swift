@@ -11,6 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler([.banner, .list])
     }
 
+    /// A notification button was clicked ("Lock to This One", "Go Back", "Manage This Network").
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        let info = response.notification.request.content.userInfo as? [String: String] ?? [:]
+        Task { @MainActor in Notifier.onAction?(action, info) }
+        completionHandler()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         // After an automatic update, come back quietly in the menu bar.
@@ -61,6 +70,11 @@ struct BSSIDLockApp: App {
             CommandMenu("Lock") {
                 Toggle("Lock Enabled", isOn: $engine.lockEnabled)
                     .keyboardShortcut("l", modifiers: .command)
+                Menu("Pause") { PauseMenuItems(e: engine, prefix: "") }
+                    .disabled(!engine.lockEnabled || engine.isPaused)
+                Button("Resume") { engine.resume() }
+                    .disabled(!engine.isPaused)
+                Divider()
                 Button("Scan Now") { engine.requestScan() }
                     .keyboardShortcut("r", modifiers: .command)
                 Divider()
@@ -74,7 +88,7 @@ struct BSSIDLockApp: App {
                 .environmentObject(ui)
                 .environmentObject(engine.updater)
         } label: {
-            Image(systemName: engine.isLocked ? "lock.fill" : "lock.open")
+            Image(systemName: engine.isPaused ? "pause.circle" : engine.isLocked ? "lock.fill" : "lock.open")
         }
         .menuBarExtraStyle(.window)
     }
@@ -103,15 +117,25 @@ struct MenuBarView: View {
                     .help(e.lockEnabled ? "Turn the lock off" : "Turn the lock on")
             }
 
+            if e.isPaused {
+                Button { e.resume() } label: { Label("Resume the Lock", systemImage: "play.circle.fill") }
+                    .buttonStyle(.borderless)
+            }
+
             if e.locationOK && !e.ssid.isEmpty {
                 Divider()
-                Text("LOCK TO").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                HStack {
+                    Text("LOCK TO").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(e.ssid).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
                 ChoiceRow(title: "Any favorite",
                           subtitle: e.favorites.isEmpty ? "Star access points in the main window" : "Prefers the top of your list",
                           rssi: nil, showBars: false,
                           selected: e.lockEnabled && e.target == nil) {
                     e.lockEnabled = true
                     e.target = nil
+                    e.resume()
                 }
                 .disabled(e.favorites.isEmpty)
                 ForEach(quickItems) { item in
@@ -138,6 +162,12 @@ struct MenuBarView: View {
                 Button("Open BSSIDLock") { show() }
                 Text("v\(Updater.currentVersion)").font(.caption).foregroundStyle(.tertiary)
                 Spacer()
+                Menu { PauseMenuItems(e: e, prefix: "Pause ") } label: { Image(systemName: "pause.circle") }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(!e.lockEnabled || e.isPaused)
+                    .help("Pause the lock for a while")
                 Button { e.requestScan() } label: {
                     if e.busy { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
                 }
@@ -162,6 +192,18 @@ struct MenuBarView: View {
         NSApp.setActivationPolicy(.regular)   // bring the Dock icon back while the window is open
         openWindow(id: "main")
         bringToFront()
+    }
+}
+
+/// "For 15 Minutes", "For 1 Hour", "Until I Switch Networks" (with an optional "Pause " in front).
+struct PauseMenuItems: View {
+    let e: Engine
+    let prefix: String
+
+    var body: some View {
+        Button(prefix + (prefix.isEmpty ? "For" : "for") + " 15 Minutes") { e.pause(.minutes(15)) }
+        Button(prefix + (prefix.isEmpty ? "For" : "for") + " 1 Hour") { e.pause(.minutes(60)) }
+        Button(prefix + "Until I Switch Networks") { e.pause(.untilNetworkChanges) }
     }
 }
 

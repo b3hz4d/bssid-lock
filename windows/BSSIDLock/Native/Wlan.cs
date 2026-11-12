@@ -193,6 +193,7 @@ namespace BSSIDLock.Native
         /// <summary>The current Wi-Fi connection, or null when not connected.</summary>
         public static ConnectionInfo GetCurrentConnection()
         {
+            if (DemoWifi.On) return DemoWifi.Current();
             using (var s = new Session())
             {
                 if (!s.Connected) return null;
@@ -225,6 +226,7 @@ namespace BSSIDLock.Native
         /// <summary>All access points Windows knows about, optionally after a fresh scan (takes ~4 s).</summary>
         public static List<BssEntry> GetAccessPoints(bool scanFirst)
         {
+            if (DemoWifi.On) return DemoWifi.AccessPoints();
             if (scanFirst)
             {
                 int src;
@@ -274,6 +276,7 @@ namespace BSSIDLock.Native
         /// </summary>
         public static void ConnectToAccessPoint(string profileName, string bssid)
         {
+            if (DemoWifi.On) { DemoWifi.Connect(bssid); return; }
             byte[] mac = ParseMac(bssid);
             // DOT11_BSSID_LIST with one entry: NDIS_OBJECT_HEADER(4) uNumOfEntries(4) uTotalNumOfEntries(4) BSSIDs[6] (+2 padding)
             const int listSize = 20;
@@ -318,6 +321,7 @@ namespace BSSIDLock.Native
         /// <summary>Start listening for Wi-Fi events. Returns false if notifications aren't available.</summary>
         public static bool StartMonitoring()
         {
+            if (DemoWifi.On) return true;
             if (monitorHandle != IntPtr.Zero) return true;
             try
             {

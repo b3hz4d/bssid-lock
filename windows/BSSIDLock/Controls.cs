@@ -18,7 +18,7 @@ namespace BSSIDLock
         // Segoe MDL2 Assets
         public const string GlyphRefresh = "", GlyphHistory = "", GlyphSettings = "", GlyphMore = "",
             GlyphUp = "", GlyphDown = "", GlyphChevron = "", GlyphWarning = "", GlyphWifi = "",
-            GlyphLocation = "";
+            GlyphLocation = "", GlyphPause = "", GlyphPlay = "", GlyphLock = "", GlyphFolder = "";
 
         public static void FillRound(Graphics g, RectangleF r, float radius, Color color)
         {

@@ -13,11 +13,22 @@ struct SettingsSheet: View {
         VStack(spacing: 0) {
             Form {
                 Section {
+                    ForEach(e.networks, id: \.self) { n in
+                        HStack(spacing: 10) {
+                            Image(systemName: "wifi").foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(n)
+                                Text(summary(of: n)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Remove…") { ui.removingNetwork = n }
+                        }
+                    }
                     HStack {
-                        TextField("Network name", text: $ui.ssidDraft, prompt: Text("Network name"))
+                        TextField("Network name", text: $ui.ssidDraft, prompt: Text("Add a network"))
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
-                            .onSubmit(applySSID)
+                            .onSubmit(addSSID)
                         Menu("Nearby") {
                             if e.nearby.isEmpty { Text("No networks found") }
                             ForEach(e.nearby) { n in
@@ -27,21 +38,16 @@ struct SettingsSheet: View {
                             Button("Scan Again") { e.requestScan() }
                         }
                         .fixedSize()
+                        Button("Add", action: addSSID)
+                            .disabled(draftSSID.isEmpty || e.networks.contains(draftSSID))
                     }
-                    HStack {
-                        Button("Use Current Network") {
-                            ui.ssidDraft = e.currentSSID ?? ""
-                            applySSID()
-                        }
-                        .disabled(e.currentSSID == nil || e.currentSSID == e.ssid)
-                        Spacer()
-                        Button("Apply", action: applySSID)
-                            .disabled(draftSSID.isEmpty || draftSSID == e.ssid)
+                    if let cur = e.currentSSID, !e.networks.contains(cur) {
+                        Button("Add “\(cur)”, the Network You're On") { e.addNetwork(cur) }
                     }
                 } header: {
-                    Text("Network")
+                    Text("Networks")
                 } footer: {
-                    Text("BSSIDLock only acts while you're connected to this network.")
+                    Text("BSSIDLock only acts while you're connected to one of these, and follows you from one to the next. Each network has its own favorites.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -67,6 +73,14 @@ struct SettingsSheet: View {
                             Text("Enter a whole number from 3 to 120.").font(.caption).foregroundStyle(.red)
                         }
                     }
+                    Picker("When the signal is weak", selection: $e.weakThreshold) {
+                        Text("Stay locked").tag(0)
+                        Divider()
+                        ForEach([-70, -75, -80], id: \.self) { Text("Let go below \($0) dBm").tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    Text("“Let go” moves you to a stronger favorite (or lets macOS choose) while your chosen access point is weak, and comes back once it recovers.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Toggle("Open at login", isOn: Binding(get: { e.launchAtLogin }, set: { e.setLaunchAtLogin($0) }))
                     Toggle("Notify me when the Wi-Fi network or access point changes", isOn: $e.notifyChanges)
                 } header: {
@@ -86,12 +100,13 @@ struct SettingsSheet: View {
                         Button("Add", action: addManual)
                             .disabled(!isValidBSSID(ui.manualBSSID))
                     }
+                    .disabled(e.ssid.isEmpty)
                     if !ui.manualBSSID.isEmpty && !isValidBSSID(ui.manualBSSID) {
                         Text("An address is 6 pairs of characters (0–9, a–f), like aa:bb:cc:dd:ee:ff.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("Add a favorite by address")
+                    Text(e.ssid.isEmpty ? "Add a favorite by address" : "Add a favorite to “\(e.ssid)” by address")
                 } footer: {
                     Text("Useful for an access point that's out of range right now.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -118,7 +133,7 @@ struct SettingsSheet: View {
                             .disabled(ui.pwDraft == e.password || e.ssid.isEmpty)
                     }
                 } header: {
-                    Text("Wi-Fi password (optional)")
+                    Text(e.ssid.isEmpty ? "Wi-Fi password (optional)" : "Wi-Fi password for “\(e.ssid)” (optional)")
                 } footer: {
                     Text("Only needed if switching access points fails without it. Stored in your Keychain.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -151,9 +166,18 @@ struct SettingsSheet: View {
             }
             .padding(12)
         }
-        .frame(width: 540, height: 660)
+        .frame(width: 560, height: 700)
+        .alert("Stop managing “\(ui.removingNetwork ?? "")”?", isPresented: removeBinding) {
+            Button("Remove", role: .destructive) {
+                if let n = ui.removingNetwork { e.removeNetwork(n) }
+                ui.removingNetwork = nil
+            }
+            Button("Cancel", role: .cancel) { ui.removingNetwork = nil }
+        } message: {
+            Text("BSSIDLock stops acting on it and forgets its favorites and saved password.")
+        }
         .onAppear {
-            ui.ssidDraft = e.ssid
+            ui.ssidDraft = ""
             ui.pwDraft = e.password
             ui.intervalText = String(Int(e.interval))
             ui.customInterval = !Self.intervalPresets.contains(Int(e.interval))
@@ -194,9 +218,24 @@ struct SettingsSheet: View {
 
     private var draftSSID: String { ui.ssidDraft.trimmingCharacters(in: .whitespaces) }
 
-    private func applySSID() {
-        guard !draftSSID.isEmpty else { return }
-        e.ssid = draftSSID
+    private func addSSID() {
+        guard !draftSSID.isEmpty, !e.networks.contains(draftSSID) else { return }
+        e.addNetwork(draftSSID)
+        ui.ssidDraft = ""
+    }
+
+    private var removeBinding: Binding<Bool> {
+        Binding(get: { ui.removingNetwork != nil }, set: { if !$0 { ui.removingNetwork = nil } })
+    }
+
+    /// "Connected · 3 favorites · locked to Living room"
+    private func summary(of n: String) -> String {
+        let s = e.setup(for: n)
+        var parts: [String] = []
+        if n == e.currentSSID { parts.append("Connected") }
+        parts.append(s.favorites.isEmpty ? "No favorites yet" : s.favorites.count == 1 ? "1 favorite" : "\(s.favorites.count) favorites")
+        if let t = s.target { parts.append("locked to \(e.label(for: t))") }
+        return parts.joined(separator: " · ")
     }
 
     private func addManual() {
@@ -214,6 +253,10 @@ struct ActivitySheet: View {
             HStack {
                 Text("Activity").font(.headline)
                 Spacer()
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([ActivityLog.fileURL])
+                }
+                .help(ActivityLog.fileURL.path)
                 Button("Copy All") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(activity.lines.joined(separator: "\n"), forType: .string)

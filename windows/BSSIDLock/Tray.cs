@@ -88,6 +88,8 @@ namespace BSSIDLock
         Font menuFont, boldFont, smallFont;
 
         public event Action OpenRequested, SettingsRequested, ExitRequested, UpdateRequested;
+        /// <summary>What clicking the latest notification does (null = nothing).</summary>
+        Action balloonClick;
         /// <summary>Text for the update menu item ("Check for updates", "Install version 1.3.0", …).</summary>
         public Func<string> UpdateMenuText = () => "Check for updates";
 
@@ -105,6 +107,7 @@ namespace BSSIDLock
             icon = new NotifyIcon { Text = "BSSIDLock", ContextMenuStrip = menu };
             // Left click opens the quick menu too (like the macOS menu bar), not just right click.
             icon.MouseUp += (s, e) => { if (e.Button == MouseButtons.Left) ShowMenu(); };
+            icon.BalloonTipClicked += (s, e) => { var a = balloonClick; balloonClick = null; a?.Invoke(); };
 
             BuildIcons();
             Update();
@@ -122,8 +125,12 @@ namespace BSSIDLock
             typeof(NotifyIcon).GetMethod("ShowContextMenu", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(icon, null);
         }
 
-        public void ShowBalloon(string title, string text) =>
+        /// <summary>Show a notification; <paramref name="onClick"/> runs if the user clicks it.</summary>
+        public void ShowBalloon(string title, string text, Action onClick = null)
+        {
+            balloonClick = onClick;
             icon.ShowBalloonTip(5000, string.IsNullOrEmpty(title) ? "BSSIDLock" : title, string.IsNullOrEmpty(text) ? " " : text, ToolTipIcon.Info);
+        }
 
         /// <summary>Refresh the tray icon (status dot) and tooltip.</summary>
         public void Update()
@@ -196,20 +203,37 @@ namespace BSSIDLock
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add(Item(st.LockEnabled ? "Turn lock off" : "Turn lock on", () => engine.SetLockEnabled(!st.LockEnabled)));
+            if (st.LockEnabled && engine.IsPaused)
+            {
+                var resume = Item("Resume lock", engine.Resume);
+                resume.ShortcutKeyDisplayString = engine.PauseText.Replace("until you switch networks", "until network change");
+                menu.Items.Add(resume);
+            }
+            else if (st.LockEnabled)
+            {
+                var pause = Item("Pause", null);
+                pause.DropDown.Renderer = new MenuRenderer();
+                pause.DropDown.Font = menuFont;
+                pause.DropDown.Opened += (s, e) => Theme.RoundCorners(pause.DropDown.Handle);
+                pause.DropDownItems.Add(Item("For 15 minutes", () => engine.Pause(15)));
+                pause.DropDownItems.Add(Item("For 1 hour", () => engine.Pause(60)));
+                pause.DropDownItems.Add(Item("Until I switch networks", () => engine.Pause(0)));
+                menu.Items.Add(pause);
+            }
 
             // Lock targets, one click each
-            if (st.Ssid.Length > 0 && !engine.AccessDenied)
+            if (st.Networks.Count > 0 && !engine.AccessDenied)
             {
                 menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add(new ToolStripMenuItem("LOCK TO") { Enabled = false, Tag = "subtle", Font = smallFont });
+                menu.Items.Add(new ToolStripMenuItem("LOCK TO") { Enabled = false, Tag = "subtle", Font = smallFont, ShortcutKeyDisplayString = Truncate(st.Ssid, 24) });
 
-                var any = Item("Any favorite", () => { engine.SetLockEnabled(true); engine.SetTarget(null); },
+                var any = Item("Any favorite", () => { engine.SetLockEnabled(true); engine.SetTarget(null); engine.Resume(); },
                     Keep(Glyphs.Choice(st.LockEnabled && st.Target == null, null, false, sc)));
                 any.ShortcutKeyDisplayString = st.Favorites.Count > 0 ? "top first" : "no favorites yet";
                 any.Enabled = st.Favorites.Count > 0;
                 menu.Items.Add(any);
 
-                var candidates = st.Favorites.Concat(engine.Visible.Select(v => v.Bssid).Where(b => !st.Favorites.Contains(b))).Take(8);
+                var candidates = st.Favorites.Concat(engine.Visible.Where(v => v.Ssid == st.Ssid).Select(v => v.Bssid).Where(b => !st.Favorites.Contains(b))).Take(8);
                 foreach (var b in candidates)
                 {
                     var ap = engine.Find(b);

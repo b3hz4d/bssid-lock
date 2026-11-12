@@ -201,6 +201,7 @@ namespace BSSIDLock
             var ap = engine.Find(b);
             string name = engine.NameOf(b);
             bool isCurrent = engine.Current != null && engine.Current.Bssid == b;
+            int? rssi = ap?.Rssi ?? (isCurrent ? engine.CurrentRssi : (int?)null);   // live reading if the scan missed it
             bool isTarget = engine.Settings.LockEnabled && engine.Settings.Target == b;
             bool isFav = row.Rank >= 0;
             bool hot = index == hoverIndex;
@@ -213,7 +214,7 @@ namespace BSSIDLock
             x += S(24);
 
             // Signal bars
-            Theme.DrawBars(g, new Rectangle(x, r.Height / 2 - S(9), S(22), S(18)), ap?.Rssi, Ui.Unit(this));
+            Theme.DrawBars(g, new Rectangle(x, r.Height / 2 - S(9), S(22), S(18)), rssi, Ui.Unit(this));
             x += S(36);
 
             int textRight = (isFav ? UpRect(r).Left : StarRect(r).Left) - S(8);
@@ -225,7 +226,7 @@ namespace BSSIDLock
             int top = (r.Height - boldFont.Height - smallFont.Height - lineGap) / 2;
             int titleWidth = Math.Min(TextRenderer.MeasureText(g, title, boldFont, Size.Empty, TextFormatFlags.NoPadding).Width, width);
             TextRenderer.DrawText(g, title, boldFont, new Rectangle(x, top, titleWidth + S(2), boldFont.Height),
-                ap == null ? Theme.Subtle : Theme.Text, Ui.Left);
+                rssi == null ? Theme.Subtle : Theme.Text, Ui.Left);
             int px = x + titleWidth + S(8);
             int pillCenter = top + boldFont.Height / 2;
             if (isCurrent) px = DrawPill(g, "Connected", Theme.Green, px, pillCenter, textRight);
@@ -239,6 +240,11 @@ namespace BSSIDLock
                 if (ap.Ssid.Length > 0) parts.Add(ap.Ssid);
                 parts.Add(ap.Band + " · channel " + ap.Channel);
                 parts.Add(Signal.Quality(ap.Rssi) + " (" + ap.Rssi + " dBm)");
+            }
+            else if (isCurrent)
+            {
+                parts.Add(engine.Current.Ssid);
+                parts.Add(Signal.Quality(engine.CurrentRssi) + " (" + engine.CurrentRssi + " dBm)");
             }
             else parts.Add("Out of range" + (engine.Settings.KnownSsids.TryGetValue(b, out var seen) ? " · last seen on \u201C" + seen + "\u201D" : ""));
             TextRenderer.DrawText(g, string.Join("  ·  ", parts), smallFont,

@@ -26,9 +26,12 @@ BSSIDLock does:
 - **Lock to one access point**, or star a few **favorites** and let BSSIDLock use the best one by your priority order.
 - **Name your access points** ("Living room", "Office") instead of memorizing addresses.
 - **Stays locked.** It checks every few seconds and switches back if the system roams away.
-- **Only touches the network you choose.** On any other Wi-Fi it does nothing.
+- **Several networks, each with its own favorites.** Office, home, a client site: BSSIDLock follows you to whichever one you join. On any other Wi-Fi it does nothing.
+- **Pause when you need to.** Let the system choose for 15 minutes, an hour, or until you switch networks.
+- **Optional weak-signal fallback.** Stay locked no matter what (the default), or let go when your chosen access point gets weaker than −70, −75 or −80 dBm. BSSIDLock then moves you to a stronger favorite, or lets the system choose, and comes back when the signal recovers.
 - **Lives in the menu bar (macOS) or notification area (Windows).** Closing the window keeps it running there. One click switches the lock target, with signal strength in dBm for every access point.
-- **Tells you when the network changes.** A notification appears when you join a different Wi-Fi network or switch access points, and says whether BSSIDLock or the system made the switch.
+- **Tells you when the network changes.** A notification appears when you join a different Wi-Fi network or switch access points, and says whether BSSIDLock or the system made the switch. Act on it right there: lock to the new access point, go back, or start managing a new network (buttons on macOS; click the notification on Windows).
+- **Keeps a history.** The Activity log is saved on your computer, so you can see what happened yesterday too.
 - **Updates itself.** It checks GitHub once a day and installs new versions in the background. You can turn this off.
 - **Light and dark mode** on both platforms. Windows follows your system setting, or you can pick one.
 - **Start at login**, quietly in the background.
@@ -69,7 +72,7 @@ The installer downloads the latest release, checks it against the release's SHA-
 1. **Allow location access.** Both macOS and Windows treat access point addresses as location data and hide them from apps without location permission. BSSIDLock never reads, stores or sends your actual location.
    - **macOS:** click **Allow** when asked. If you missed it, turn on BSSIDLock in System Settings → Privacy & Security → Location Services.
    - **Windows 11:** turn on **Location services** and **Let desktop apps access your location** in Settings → Privacy & security → Location. BSSIDLock shows a button that takes you there.
-2. **Choose your network.** If you're connected to it, BSSIDLock picks it up automatically. Otherwise choose it from the list.
+2. **Choose your network.** If you're connected to it, BSSIDLock picks it up automatically. Otherwise choose it from the list. Add more networks later in Settings, or from the network menu in the main window; each one keeps its own favorites.
 3. **Pick access points.** All access points on your network are listed with their signal strength.
    - **Lock** sticks to just that access point.
    - **★ (favorite)** marks the access points you're happy to use. Set **Lock to** to **Any favorite**, and BSSIDLock accepts any of them and prefers the top of the list. Drag (macOS) or use ↑/↓ (Windows) to reorder.
@@ -125,6 +128,7 @@ BSSIDLock listens for the system's Wi-Fi change events: connected, roamed and di
 - It reacts within about 1.5 seconds of a roam, without constant polling. A light check every few seconds (10 by default) is only a safety net.
 - If the access point was seen in a scan during the last 30 seconds, it switches right away without scanning again.
 - If none of your choices is in range, it waits 60 seconds before trying again, so it doesn't keep scanning and slowing your connection.
+- With the weak-signal fallback on, it needs 5 dB more than the limit before moving back, so it doesn't flip back and forth at the edge of range.
 - The apps are small: about 1.2 MB on macOS (universal) and 150 KB on Windows.
 
 ## Limitations
@@ -142,7 +146,8 @@ BSSIDLock listens for the system's Wi-Fi change events: connected, roamed and di
 | "Location access needed" | Grant location access; see [First run](#first-run). On macOS you can also run `tccutil reset Location io.github.b3hz4d.bssidlock` and relaunch. |
 | macOS: no permission prompt | Open the app from Finder or with `open`, not by running the binary inside the bundle. |
 | "Couldn't switch" | Check that the access point is in range. On macOS, save the Wi-Fi password in Settings. On Windows, make sure you've connected to the network once. |
-| Status says "Idle on …" | You're on a different network than the one chosen. That's intentional. |
+| Status says "Idle on …" | You're on a network BSSIDLock doesn't manage, so it leaves it alone. To manage it too, use **Manage "…" too** in the network menu, or add it in Settings. |
+| Status says "Paused …" | Press **Resume**, or wait: the pause ends by itself. |
 | Windows: app "disappears" when closed | It's still running in the notification area (tray). Right-click its icon → Exit to quit. |
 
 ## Project layout
@@ -163,7 +168,7 @@ docs/SIGNING.md          How releases get signed (for maintainers)
 - [x] One-line installers (no certificates needed)
 - [ ] `winget` and Scoop packages
 - [ ] Optional signed builds for manual downloads
-- [ ] Separate favorites for each network
+- [x] Separate favorites for each network
 - [ ] Linux (NetworkManager already supports `bssid` per connection; a tray app could wrap it)
 
 ## Related projects

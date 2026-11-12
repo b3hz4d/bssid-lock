@@ -10,7 +10,7 @@ struct MainView: View {
         Group {
             if !e.locationOK {
                 LocationOnboarding()
-            } else if e.ssid.isEmpty {
+            } else if e.networks.isEmpty {
                 NetworkOnboarding()
             } else {
                 Dashboard()
@@ -91,7 +91,7 @@ struct NetworkOnboarding: View {
 
             if let cur = e.currentSSID {
                 Button {
-                    e.ssid = cur
+                    e.addNetwork(cur)
                 } label: {
                     Label("Use “\(cur)”, the network you're on", systemImage: "checkmark.circle")
                 }
@@ -119,7 +119,7 @@ struct NetworkOnboarding: View {
                                         Text("\(n.count) access points").font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Button("Choose") { e.ssid = n.ssid }
+                                    Button("Choose") { e.addNetwork(n.ssid) }
                                 }
                                 .padding(.vertical, 6)
                                 .padding(.horizontal, 6)
@@ -155,7 +155,7 @@ struct NetworkOnboarding: View {
 
     private func choose() {
         let s = ui.ssidDraft.trimmingCharacters(in: .whitespaces)
-        if !s.isEmpty { e.ssid = s }
+        if !s.isEmpty { e.addNetwork(s) }
     }
 }
 
@@ -177,6 +177,9 @@ struct Dashboard: View {
                 .padding(.vertical, 8)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                NetworkMenu()
+            }
             ToolbarItemGroup {
                 Button { e.requestScan() } label: {
                     if e.busy { ProgressView().controlSize(.small) } else { Label("Scan", systemImage: "arrow.clockwise") }
@@ -188,6 +191,32 @@ struct Dashboard: View {
                     .help("Settings")
             }
         }
+    }
+}
+
+/// Toolbar menu: which network's access points the window shows, plus adding and managing networks.
+struct NetworkMenu: View {
+    @EnvironmentObject var e: Engine
+    @EnvironmentObject var ui: UIState
+
+    var body: some View {
+        Menu {
+            ForEach(e.networks, id: \.self) { n in
+                Toggle(isOn: Binding(get: { e.ssid == n }, set: { if $0 { e.ssid = n } })) {
+                    Text(n == e.currentSSID ? "\(n)  (connected)" : n)
+                }
+            }
+            if let cur = e.currentSSID, !e.networks.contains(cur) {
+                Divider()
+                Button("Manage “\(cur)” Too") { e.addNetwork(cur) }
+            }
+            Divider()
+            Button("Manage Networks…") { ui.showSettings = true }
+        } label: {
+            Label(e.ssid, systemImage: "wifi")
+                .labelStyle(.titleAndIcon)
+        }
+        .help("Each network has its own favorites. BSSIDLock follows you to whichever one you join.")
     }
 }
 
@@ -208,9 +237,20 @@ struct StatusHeader: View {
             }
             Spacer(minLength: 16)
             VStack(alignment: .trailing, spacing: 8) {
-                Toggle(e.lockEnabled ? "Lock on" : "Lock off", isOn: $e.lockEnabled)
-                    .toggleStyle(.switch)
-                    .help("When on, BSSIDLock keeps you on the access point(s) you chose")
+                HStack(spacing: 12) {
+                    if e.isPaused {
+                        Button("Resume") { e.resume() }
+                            .help("Turn the lock back on now")
+                    } else {
+                        Menu("Pause") { PauseMenuItems(e: e, prefix: "") }
+                            .fixedSize()
+                            .disabled(!e.lockEnabled)
+                            .help("Let macOS choose the access point for a while")
+                    }
+                    Toggle(e.lockEnabled ? "Lock on" : "Lock off", isOn: $e.lockEnabled)
+                        .toggleStyle(.switch)
+                        .help("When on, BSSIDLock keeps you on the access point(s) you chose")
+                }
                 Picker("Lock to", selection: $e.target) {
                     Text("Any favorite").tag(String?.none)
                     if !e.favorites.isEmpty { Divider() }

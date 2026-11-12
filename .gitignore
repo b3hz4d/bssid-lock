@@ -21,3 +21,4 @@ obj/
 
 # Windows build output
 windows/out/
+winget/out/

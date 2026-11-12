@@ -4,6 +4,10 @@
 // running exe, checked against the release's SHA-256 checksum and its version info, swapped in (Windows
 // allows renaming a running exe) and started; this copy then exits. No data is sent beyond a normal
 // HTTPS request to api.github.com / github.com.
+//
+// Installed with winget (a "portable" package in winget's own folder), it doesn't replace itself: winget checks
+// the exe hasn't changed when it upgrades or uninstalls. Instead, once winget's catalog has the new version,
+// it runs "winget upgrade" after exiting and starts again.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -13,6 +17,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -37,6 +42,7 @@ namespace BSSIDLock
     sealed class Updater
     {
         public const string Repo = "b3hz4d/bssid-lock";
+        public const string WingetId = "b3hz4d.BSSIDLock";
         static readonly TimeSpan CheckEvery = TimeSpan.FromHours(24);
 
         readonly Engine engine;
@@ -45,6 +51,8 @@ namespace BSSIDLock
         public event EventHandler Changed;
         /// <summary>The new exe is in place; the app should start it (with these arguments) and exit.</summary>
         public event Action<string> RestartRequested;
+        /// <summary>winget has the new version; the app should start the upgrade (StartWingetUpgrade) and exit.</summary>
+        public event Action WingetUpgradeRequested;
 
         public string Status { get; private set; } = "";
         public string AvailableVersion { get; private set; }
@@ -53,6 +61,17 @@ namespace BSSIDLock
         public bool Installing { get; private set; }
 
         public Updater(Engine engine) { this.engine = engine; }
+
+        /// <summary>Installed by winget: the exe runs from winget's package folder (or its command alias).</summary>
+        public static bool InstalledByWinget
+        {
+            get
+            {
+                string path = Application.ExecutablePath;
+                return path.IndexOf(@"\WinGet\Packages\", StringComparison.OrdinalIgnoreCase) >= 0
+                    || path.IndexOf(@"\WinGet\Links\", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
 
         public static Version Current
         {
@@ -96,12 +115,13 @@ namespace BSSIDLock
                 }
                 AvailableVersion = latest.ToString();
                 pending = release;
-                if (engine.Settings.AutoUpdate || userInitiated) await InstallAsync(latest);
-                else
+                if (!engine.Settings.AutoUpdate && !userInitiated)
                 {
                     Status = "Version " + AvailableVersion + " is available.";
                     engine.AddLog(Status);
                 }
+                else if (InstalledByWinget) await UpgradeWithWingetAsync(latest);
+                else await InstallAsync(latest);
             }
             catch (Exception ex)
             {
@@ -202,6 +222,63 @@ namespace BSSIDLock
             engine.AddLog(Status);
             Raise();
             RestartRequested?.Invoke(exe);
+        }
+
+        async Task UpgradeWithWingetAsync(Version version)
+        {
+            // New versions reach winget's catalog some hours (or days) after the GitHub release.
+            bool inCatalog = await Task.Run(() => WingetHas(version));
+            if (!inCatalog)
+            {
+                Status = "Version " + version + " is available. It will install through winget once winget has it (usually within a day).";
+                engine.AddLog(Status);
+                return;
+            }
+            Installing = true;
+            Status = "Updating to version " + version + " with winget. BSSIDLock restarts by itself in a minute.";
+            engine.AddLog(Status);
+            Raise();
+            WingetUpgradeRequested?.Invoke();
+        }
+
+        /// <summary>Whether winget's community catalog (github.com/microsoft/winget-pkgs) has this version.</summary>
+        static bool WingetHas(Version version)
+        {
+            string url = "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/b/b3hz4d/BSSIDLock/" + version;
+            var request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = "BSSIDLock/" + Current + " (+https://github.com/" + Repo + ")";
+            request.Accept = "application/vnd.github+json";
+            request.Method = "GET";
+            try
+            {
+                using (var response = (HttpWebResponse)request.GetResponse()) return response.StatusCode == HttpStatusCode.OK;
+            }
+            catch (WebException ex) when (ex.Response is HttpWebResponse r && r.StatusCode == HttpStatusCode.NotFound)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Start a hidden helper that waits for this process to exit, runs "winget upgrade" and starts BSSIDLock again
+        /// (with --after-winget, so the new copy can tell whether the upgrade worked). The caller then exits.
+        /// </summary>
+        public static void StartWingetUpgrade(bool startHidden)
+        {
+            string exe = Application.ExecutablePath.Replace("'", "''");
+            string args = "--after-winget " + Current + (startHidden ? " --minimized" : "");
+            string script =
+                "$ErrorActionPreference = 'SilentlyContinue'\n" +
+                "Wait-Process -Id " + Process.GetCurrentProcess().Id + " -Timeout 30\n" +
+                "winget upgrade --id " + WingetId + " --exact --silent --accept-source-agreements --accept-package-agreements | Out-Null\n" +
+                "Start-Process -FilePath '" + exe + "' -ArgumentList '" + args + "'\n";
+            var psi = new ProcessStartInfo("powershell.exe",
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            Process.Start(psi).Dispose();
         }
 
         static bool CanWriteTo(string dir)

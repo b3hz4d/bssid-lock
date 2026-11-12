@@ -98,7 +98,10 @@ namespace BSSIDLock
         readonly StackPanel stack;
         readonly Panel footer;
         readonly FieldBox ssid, manual;
-        readonly DropDownButton nearby, interval;
+        readonly DropDownButton nearby, interval, weak;
+        readonly SettingsCard networksCard;
+        readonly SettingRow addNetworkRow;
+        readonly UiButton addNetwork;
         readonly ToggleSwitch startup, notify, autoUpdate;
         readonly SegmentedControl appearance;
         readonly SettingRow versionRow;
@@ -119,10 +122,9 @@ namespace BSSIDLock
             stack.SuspendLayout();
             host = new ScrollHost(stack) { Dock = DockStyle.Fill };
 
-            // ---- Network
-            ssid = new FieldBox { DesignWidth = 220, Placeholder = "Network name" };
-            ssid.Text = st.Ssid;
-            nearby = new DropDownButton { Placeholder = "Choose", EmptyText = "No networks found yet" };
+            // ---- Networks
+            ssid = new FieldBox { DesignWidth = 180, Placeholder = "Network name" };
+            nearby = new DropDownButton { Placeholder = "Nearby", EmptyText = "No networks found yet" };
             nearby.SetOptions(engine.Nearby.Select(n => new KeyValuePair<string, object>(n.Ssid, n.Ssid)));
             nearby.SelectedValue = null;
             nearby.SelectionChanged += (s, e) => { if (nearby.SelectedValue is string picked) ssid.Text = picked; nearby.SelectedValue = null; };
@@ -138,9 +140,22 @@ namespace BSSIDLock
                 engine.AccessDenied ? " Windows is hiding nearby networks until you allow location access; you can still type the name."
                 : engine.Current == null ? " You're not connected to Wi-Fi right now; you can type the name."
                 : "";
-            Section("Network",
-                new SettingRow("Wi-Fi network", "BSSIDLock only acts while you're connected to this network. Windows must already know it (connect once normally)." + why,
-                    new HStack(ssid, nearby)));
+            addNetwork = new UiButton { Text = "Add", MinWidth = 64, Enabled = false };
+            ssid.Box.TextChanged += (s, e) => addNetwork.Enabled = ssid.Text.Trim().Length > 0 && !engine.Settings.Manages(ssid.Text.Trim());
+            ssid.Box.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { addNetwork.PerformClick(); e.SuppressKeyPress = true; } };
+            addNetwork.Click += (s, e) =>
+            {
+                if (!addNetwork.Enabled) return;
+                engine.AddNetwork(ssid.Text);
+                ssid.Text = "";
+                RebuildNetworks();
+            };
+            addNetworkRow = new SettingRow("Add a network",
+                "Windows must already know it (connect to it once normally)." + why, new HStack(ssid, nearby, addNetwork));
+            stack.Controls.Add(new SectionHeading("Networks") { Margin = new Padding(0, 10, 0, 8) });
+            networksCard = new SettingsCard { Margin = new Padding(0, 0, 0, 10) };
+            stack.Controls.Add(networksCard);
+            FillNetworks();
 
             // ---- Behavior
             interval = new DropDownButton { MinWidth = 170 };
@@ -154,10 +169,16 @@ namespace BSSIDLock
                 custom.Click += (s, e) => AskCustomInterval();
                 return new ToolStripItem[] { custom };
             };
+            weak = new DropDownButton { MinWidth = 190 };
+            var floors = new List<int> { 0, -70, -75, -80 };
+            if (!floors.Contains(st.WeakThreshold)) floors.Add(st.WeakThreshold);
+            weak.SetOptions(floors.Select(f => new KeyValuePair<string, object>(f == 0 ? "Stay locked" : "Let go below " + f + " dBm", f)));
+            weak.SelectedValue = st.WeakThreshold;
             startup = Toggle(StartWithWindows.IsEnabled);
             notify = Toggle(st.NotifyChanges);
             Section("Behavior",
                 new SettingRow("Safety check", "Wi-Fi changes are handled instantly. This extra check is only a backup.", interval),
+                new SettingRow("When the signal is weak", "“Let go” moves you to a stronger favorite (or lets Windows choose) while your chosen access point is weak, and comes back once it recovers.", weak),
                 new SettingRow("Start with Windows", "Runs quietly in the notification area after you sign in.", startup),
                 new SettingRow("Notifications", "Tell me when the Wi-Fi network or access point changes.", notify));
 
@@ -174,7 +195,9 @@ namespace BSSIDLock
             checkNow.Click += async (s, e) => await updater.CheckAsync(userInitiated: true);
             versionRow = new SettingRow("Version " + Updater.Current, "", checkNow);
             Section("Updates",
-                new SettingRow("Automatic updates", "Checks this project's GitHub releases once a day and installs new versions in the background. Every download is checked against the release checksum.", autoUpdate),
+                new SettingRow("Automatic updates", Updater.InstalledByWinget
+                    ? "Checks this project's GitHub releases once a day and updates through winget (you installed BSSIDLock with winget)."
+                    : "Checks this project's GitHub releases once a day and installs new versions in the background. Every download is checked against the release checksum.", autoUpdate),
                 versionRow);
 
             // ---- Favorites by address
@@ -197,7 +220,7 @@ namespace BSSIDLock
                 add.Text = "Added";
             };
             Section("Favorites",
-                new SettingRow("Add by address", "For an access point that's out of range right now.", new HStack(manual, add)));
+                new SettingRow("Add by address", (st.Networks.Count > 0 ? "Adds it to “" + st.Ssid + "”. " : "") + "For an access point that's out of range right now.", new HStack(manual, add)));
 
             stack.ResumeLayout(false);
 
@@ -228,6 +251,54 @@ namespace BSSIDLock
             updater.Changed += OnUpdaterChanged;
             OnUpdaterChanged(null, EventArgs.Empty);
             Finish();
+        }
+
+        /// <summary>One row per managed network (with Remove), then the "Add a network" row.</summary>
+        void FillNetworks()
+        {
+            networksCard.SuspendLayout();
+            foreach (var old in networksCard.Controls.Cast<Control>().Where(c => c != addNetworkRow).ToList())
+            {
+                networksCard.Controls.Remove(old);
+                old.Dispose();
+            }
+            networksCard.Controls.Remove(addNetworkRow);
+            foreach (var n in engine.Settings.Networks)
+            {
+                string name = n.Ssid;
+                var remove = new UiButton { Text = "Remove", MinWidth = 80 };
+                remove.Click += (s, e) =>
+                {
+                    var answer = MessageBox.Show(this, "Stop managing “" + name + "”? BSSIDLock stops acting on it and forgets its favorites.",
+                        "BSSIDLock", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                    if (answer != DialogResult.Yes) return;
+                    engine.RemoveNetwork(name);
+                    BeginInvoke((Action)RebuildNetworks);   // not inside the clicked button's own Click
+                };
+                networksCard.Controls.Add(new SettingRow(name, Summary(n), remove));
+            }
+            networksCard.Controls.Add(addNetworkRow);
+            networksCard.ResumeLayout();
+        }
+
+        void RebuildNetworks()
+        {
+            if (IsDisposed) return;
+            FillNetworks();
+            Theme.Apply(this);
+            OnThemeApplied();
+            stack.PerformLayout();
+            host.PerformLayout();
+        }
+
+        /// <summary>"Connected now · 3 favorites · locked to Living room"</summary>
+        string Summary(NetworkSetup n)
+        {
+            var parts = new List<string>();
+            if (engine.Current != null && engine.Current.Ssid == n.Ssid) parts.Add("Connected now");
+            parts.Add(n.Favorites.Count == 0 ? "No favorites yet" : n.Favorites.Count == 1 ? "1 favorite" : n.Favorites.Count + " favorites");
+            if (n.Target != null) parts.Add("locked to " + engine.Label(n.Target));
+            return string.Join(" · ", parts);
         }
 
         void Section(string title, params SettingRow[] rows)
@@ -292,13 +363,15 @@ namespace BSSIDLock
             if (DialogResult == DialogResult.OK)
             {
                 st.IntervalSeconds = interval.SelectedValue is int sec ? sec : st.IntervalSeconds;
+                if (weak.SelectedValue is int floor) engine.SetWeakThreshold(floor);
                 st.AutoUpdate = autoUpdate.Checked;
                 st.NotifyChanges = notify.Checked;
                 st.Theme = ThemeKeys[appearance.SelectedIndex];
                 try { StartWithWindows.Set(startup.Checked); }
                 catch (Exception ex) { engine.AddLog("Couldn't change “start with Windows”: " + ex.Message); }
                 st.Save();
-                engine.SetSsid(ssid.Text);
+                // A name typed into "Add a network" but not added yet: add it on Save too.
+                if (ssid.Text.Trim().Length > 0 && !st.Manages(ssid.Text.Trim())) engine.AddNetwork(ssid.Text);
             }
             else
             {
@@ -333,9 +406,16 @@ namespace BSSIDLock
 
             var copy = new UiButton { Text = "Copy all" };
             copy.Click += (s, e) => { if (engine.Log.Count > 0) { Clipboard.SetText(string.Join(Environment.NewLine, engine.Log)); copy.Text = "Copied"; } };
+            var file = new UiButton { Glyph = Ui.GlyphFolder, Text = "Show file" };
+            file.Click += (s, e) =>
+            {
+                try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + Engine.LogPath + "\""); }
+                catch (Exception ex) { engine.AddLog("Couldn't open the folder: " + ex.Message); }
+            };
+            new ToolTip().SetToolTip(file, "The full history is saved in " + Engine.LogPath);
             var close = new UiButton { Text = "Close", Style = UiButton.Kind.Primary, DialogResult = DialogResult.Cancel };
             CancelButton = close;
-            var footer = Buttons(close, copy);
+            var footer = Buttons(close, copy, file);
             footer.Dock = DockStyle.Bottom;
             footer.Padding = new Padding(20, 12, 20, 16);
 
