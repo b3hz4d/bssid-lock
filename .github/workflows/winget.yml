@@ -17,6 +17,7 @@ jobs:
   test:
     name: Validate, install and uninstall
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -49,8 +50,10 @@ jobs:
           $exe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter BSSIDLock.exe | Select-Object -First 1
           if (-not $exe) { throw 'BSSIDLock.exe is not in the winget packages folder' }
           "Installed: $($exe.FullName)"
-          $link = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\bssidlock.exe'
-          if (-not (Test-Path $link)) { throw 'the bssidlock command alias is missing' }
+          $link = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\BSSIDLock.exe'
+          if (-not (Test-Path $link)) { throw 'the BSSIDLock command alias is missing' }
+          $motw = Get-Item $exe.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue
+          "Marked as downloaded from the internet: $([bool]$motw)"
 
       - name: Start from winget's folder (Settings should say updates go through winget)
         shell: powershell
@@ -60,8 +63,11 @@ jobs:
           $settingsDir = Join-Path $env:APPDATA 'BSSIDLock'
           New-Item -ItemType Directory -Force $settingsDir | Out-Null
           [IO.File]::WriteAllText((Join-Path $settingsDir 'settings.json'), '{"Networks":[{"Ssid":"Office","Favorites":[],"Target":null}],"Ssid":"Office","LockEnabled":true,"IntervalSeconds":10,"TrayHintShown":true,"Theme":"light","AutoUpdate":false,"NotifyChanges":false}')
-          $link = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\bssidlock.exe'
-          $p = Start-Process $link -ArgumentList @('--demo', '--open-settings') -PassThru
+          $link = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\BSSIDLock.exe'
+          # Start it directly (CreateProcess), as Windows would from the command alias. Start-Process goes through
+          # ShellExecute, which can stop at a security prompt for downloaded files that nobody can click here.
+          $psi = New-Object Diagnostics.ProcessStartInfo -Property @{ FileName = $link; Arguments = '--demo --open-settings'; UseShellExecute = $false }
+          $p = [Diagnostics.Process]::Start($psi)
           Start-Sleep -Seconds 8
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height

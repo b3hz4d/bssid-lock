@@ -50,8 +50,6 @@ PackageIdentifier: $id
 PackageVersion: $version
 MinimumOSVersion: 10.0.18362.0
 InstallerType: portable
-Commands:
-- bssidlock
 ReleaseDate: $released
 Installers:
 - Architecture: neutral

@@ -271,7 +271,9 @@ namespace BSSIDLock
                 "$ErrorActionPreference = 'SilentlyContinue'\n" +
                 "Wait-Process -Id " + Process.GetCurrentProcess().Id + " -Timeout 30\n" +
                 "winget upgrade --id " + WingetId + " --exact --silent --accept-source-agreements --accept-package-agreements | Out-Null\n" +
-                "Start-Process -FilePath '" + exe + "' -ArgumentList '" + args + "'\n";
+                // Started directly (not through the shell), like the self-updater's restart.
+                "[Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{ FileName = '" + exe +
+                "'; Arguments = '" + args + "'; UseShellExecute = $false })) | Out-Null\n";
             var psi = new ProcessStartInfo("powershell.exe",
                 "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
             {
