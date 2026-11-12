@@ -24,14 +24,9 @@ jobs:
         shell: bash
         run: ./winget/make-manifests.sh "${{ inputs.version }}" winget-out
 
-      - name: Get the latest winget
+      - name: winget version
         shell: powershell
-        run: |
-          # The runner image's winget can be older than the manifest schema winget-pkgs uses now.
-          Install-PackageProvider -Name NuGet -Force | Out-Null
-          Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery
-          Repair-WinGetPackageManager -AllUsers -Latest -Force
-          winget --version
+        run: winget --version
 
       - name: Validate and install
         shell: powershell
@@ -39,8 +34,16 @@ jobs:
           $dir = "winget-out/manifests/b/b3hz4d/BSSIDLock/${{ inputs.version }}"
           Get-ChildItem $dir | ForEach-Object { "---- $($_.Name)"; Get-Content $_.FullName }
           winget settings --enable LocalManifestFiles
-          winget validate --manifest $dir
-          if ($LASTEXITCODE -ne 0) { throw "winget validate failed ($LASTEXITCODE)" }
+          $out = winget validate --manifest $dir 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0) {
+            # The runner's winget can be older than the schema winget-pkgs uses (1.28); it then only warns that the
+            # schema header looks unfamiliar (exit code 0x8A150028, "validated with warnings"). Anything else fails.
+            $other = ($out -split "`n") | Where-Object { $_ -match 'Manifest (Warning|Error)' -and $_ -notmatch 'schema header URL does not match' }
+            if ($code -ne -1978335192 -or $other) { throw "winget validate failed ($code)" }
+            'OK: only the schema-header warning from an older winget.'
+          }
           winget install --manifest $dir --accept-package-agreements --accept-source-agreements --disable-interactivity
           if ($LASTEXITCODE -ne 0) { throw "winget install failed ($LASTEXITCODE)" }
           $exe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter BSSIDLock.exe | Select-Object -First 1
