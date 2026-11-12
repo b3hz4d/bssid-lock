@@ -147,7 +147,9 @@ namespace BSSIDLock
             {
                 int w = Math.Max(bounds.Width, buffer?.Width ?? 0), h = Math.Max(bounds.Height, buffer?.Height ?? 0);
                 buffer?.Dispose();
-                buffer = new Bitmap(w, h);
+                // No alpha channel: GDI text (TextRenderer) leaves alpha unset on ARGB bitmaps, so each redraw would
+                // blend over the last one and the text would smear.
+                buffer = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
             }
             using (var g = Graphics.FromImage(buffer))
             {
