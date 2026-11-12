@@ -84,7 +84,7 @@ jobs:
       - name: Uninstall
         shell: powershell
         run: |
-          winget uninstall --manifest "winget-out/manifests/b/b3hz4d/BSSIDLock/${{ inputs.version }}" --disable-interactivity
+          winget uninstall --manifest "winget-out/manifests/b/b3hz4d/BSSIDLock/${{ inputs.version }}" --accept-source-agreements --disable-interactivity
           if ($LASTEXITCODE -ne 0) { throw "winget uninstall failed ($LASTEXITCODE)" }
           if (Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter BSSIDLock.exe -ErrorAction SilentlyContinue) { throw 'BSSIDLock.exe is still installed' }
           'OK: removed'
