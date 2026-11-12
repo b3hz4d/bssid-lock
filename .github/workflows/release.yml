@@ -187,4 +187,9 @@ jobs:
           $(cat dist/SHA256SUMS.txt)
           \`\`\`
           EOF
-          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "BSSIDLock $TAG" --notes-file notes.md --target "$GITHUB_SHA"
+          # A re-run (or a duplicate run) of the same tag leaves the published release untouched.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it as it is."
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "BSSIDLock $TAG" --notes-file notes.md --target "$GITHUB_SHA"
+          fi
