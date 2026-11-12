@@ -28,6 +28,9 @@ namespace BSSIDLock
         bool adjusting;
         Font boldFont, smallFont, glyphFont, headerFont;
         Bitmap buffer;   // one reusable paint buffer instead of a new bitmap per row
+        // Background behind the row being drawn. Text drawn into a bitmap must be given its real background:
+        // otherwise GDI smooths (ClearType) against black, which makes dark text look smeared on light colors.
+        Color back;
 
         public event Action<string> LockClicked, UnlockClicked, FavoriteClicked;
         public event Action<string, int> MoveClicked;
@@ -147,9 +150,7 @@ namespace BSSIDLock
             {
                 int w = Math.Max(bounds.Width, buffer?.Width ?? 0), h = Math.Max(bounds.Height, buffer?.Height ?? 0);
                 buffer?.Dispose();
-                // No alpha channel: GDI text (TextRenderer) leaves alpha unset on ARGB bitmaps, so each redraw would
-                // blend over the last one and the text would smear.
-                buffer = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                buffer = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppRgb);   // opaque
             }
             using (var g = Graphics.FromImage(buffer))
             {
@@ -158,6 +159,7 @@ namespace BSSIDLock
                 bool isAp = row.Type == ListRow.Kind.AccessPoint;
                 bool selected = isAp && (e.State & DrawItemState.Selected) != 0;
                 g.Clear(Theme.Surface);
+                back = selected ? Theme.Selection : isAp && e.Index == hoverIndex ? Theme.Mix(Theme.Surface, Theme.Hover, 0.7f) : Theme.Surface;
                 if (selected || (isAp && e.Index == hoverIndex))
                 {
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -182,18 +184,18 @@ namespace BSSIDLock
             int h = headerFont.Height;
             var textRect = new Rectangle(S(16), r.Bottom - h - S(6), r.Width - S(32), h);
             var size = TextRenderer.MeasureText(g, text, headerFont, Size.Empty, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, text, headerFont, textRect, Theme.Subtle, Ui.Left);
+            TextRenderer.DrawText(g, text, headerFont, textRect, Theme.Subtle, back, Ui.Left);
             if (!string.IsNullOrEmpty(row.Caption))
             {
                 int x = textRect.X + size.Width + S(8);
                 TextRenderer.DrawText(g, row.Caption, smallFont, new Rectangle(x, textRect.Y, Math.Max(0, textRect.Right - x), h),
-                    Theme.Mix(Theme.Subtle, Theme.Surface, 0.3f), Ui.Left);
+                    Theme.Mix(Theme.Subtle, Theme.Surface, 0.3f), back, Ui.Left);
             }
         }
 
         void DrawHint(Graphics g, Rectangle r, ListRow row)
         {
-            TextRenderer.DrawText(g, row.Text, Font, new Rectangle(S(16), 0, r.Width - S(32), r.Height), Theme.Subtle,
+            TextRenderer.DrawText(g, row.Text, Font, new Rectangle(S(16), 0, r.Width - S(32), r.Height), Theme.Subtle, back,
                 Ui.Left | TextFormatFlags.WordBreak);
         }
 
@@ -212,7 +214,7 @@ namespace BSSIDLock
             int x = S(16);
             // Priority number (favorites)
             if (isFav)
-                TextRenderer.DrawText(g, (row.Rank + 1).ToString(), smallFont, new Rectangle(x, 0, S(16), r.Height), Theme.Subtle, Ui.Center);
+                TextRenderer.DrawText(g, (row.Rank + 1).ToString(), smallFont, new Rectangle(x, 0, S(16), r.Height), Theme.Subtle, back, Ui.Center);
             x += S(24);
 
             // Signal bars
@@ -228,7 +230,7 @@ namespace BSSIDLock
             int top = (r.Height - boldFont.Height - smallFont.Height - lineGap) / 2;
             int titleWidth = Math.Min(TextRenderer.MeasureText(g, title, boldFont, Size.Empty, TextFormatFlags.NoPadding).Width, width);
             TextRenderer.DrawText(g, title, boldFont, new Rectangle(x, top, titleWidth + S(2), boldFont.Height),
-                rssi == null ? Theme.Subtle : Theme.Text, Ui.Left);
+                rssi == null ? Theme.Subtle : Theme.Text, back, Ui.Left);
             int px = x + titleWidth + S(8);
             int pillCenter = top + boldFont.Height / 2;
             if (isCurrent) px = DrawPill(g, "Connected", Theme.Green, px, pillCenter, textRight);
@@ -250,7 +252,7 @@ namespace BSSIDLock
             }
             else parts.Add("Out of range" + (engine.Settings.KnownSsids.TryGetValue(b, out var seen) ? " · last seen on \u201C" + seen + "\u201D" : ""));
             TextRenderer.DrawText(g, string.Join("  ·  ", parts), smallFont,
-                new Rectangle(x, top + boldFont.Height + lineGap, width, smallFont.Height), Theme.Subtle, Ui.Left);
+                new Rectangle(x, top + boldFont.Height + lineGap, width, smallFont.Height), Theme.Subtle, back, Ui.Left);
 
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
@@ -266,21 +268,23 @@ namespace BSSIDLock
             bool starHot = hot && hoverPart == "star";
             if (starHot) Ui.FillRound(g, starRect, S(5), Theme.Hover);
             TextRenderer.DrawText(g, isFav ? "" : "", glyphFont, starRect,
-                isFav ? Theme.Star : starHot ? Theme.Text : Theme.Subtle, Ui.Center);
+                isFav ? Theme.Star : starHot ? Theme.Text : Theme.Subtle, starHot ? Theme.Hover : back, Ui.Center);
 
             // Lock / Unlock
             var lockRect = LockRect(r);
             bool lockHot = hot && hoverPart == "lock";
             if (!isTarget)
             {
-                Ui.FillRound(g, lockRect, S(5), lockHot ? Theme.Mix(Theme.Accent, Color.White, 0.12f) : Theme.Accent);
-                TextRenderer.DrawText(g, "Lock", Font, lockRect, Theme.AccentText, Ui.Center);
+                var fill = lockHot ? Theme.Mix(Theme.Accent, Color.White, 0.12f) : Theme.Accent;
+                Ui.FillRound(g, lockRect, S(5), fill);
+                TextRenderer.DrawText(g, "Lock", Font, lockRect, Theme.AccentText, fill, Ui.Center);
             }
             else
             {
-                Ui.FillRound(g, lockRect, S(5), lockHot ? Theme.Hover : Theme.Surface);
+                var fill = lockHot ? Theme.Hover : Theme.Surface;
+                Ui.FillRound(g, lockRect, S(5), fill);
                 Ui.DrawRound(g, lockRect, S(5), Theme.Border);
-                TextRenderer.DrawText(g, "Unlock", Font, lockRect, Theme.Text, Ui.Center);
+                TextRenderer.DrawText(g, "Unlock", Font, lockRect, Theme.Text, fill, Ui.Center);
             }
 
             // More (…)
@@ -290,7 +294,8 @@ namespace BSSIDLock
         void DrawGlyphButton(Graphics g, Rectangle rect, string glyph, bool hot, bool enabled)
         {
             if (hot && enabled) Ui.FillRound(g, rect, S(5), Theme.Hover);
-            TextRenderer.DrawText(g, glyph, glyphFont, rect, enabled ? (hot ? Theme.Text : Theme.Subtle) : Theme.Border, Ui.Center);
+            TextRenderer.DrawText(g, glyph, glyphFont, rect, enabled ? (hot ? Theme.Text : Theme.Subtle) : Theme.Border,
+                hot && enabled ? Theme.Hover : back, Ui.Center);
         }
 
         int DrawPill(Graphics g, string text, Color color, int x, int centerY, int maxRight)
@@ -299,8 +304,10 @@ namespace BSSIDLock
             var rect = new Rectangle(x, centerY - size.Height / 2 - S(2), size.Width + S(14), size.Height + S(4));
             if (rect.Right > maxRight) return x;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            Ui.FillRound(g, rect, rect.Height / 2f, Color.FromArgb(Theme.Dark ? 60 : 36, color));
-            TextRenderer.DrawText(g, text, smallFont, rect, Theme.Dark ? Theme.Mix(color, Color.White, 0.35f) : color, Ui.Center);
+            int alpha = Theme.Dark ? 60 : 36;
+            Ui.FillRound(g, rect, rect.Height / 2f, Color.FromArgb(alpha, color));
+            TextRenderer.DrawText(g, text, smallFont, rect, Theme.Dark ? Theme.Mix(color, Color.White, 0.35f) : color,
+                Theme.Mix(back, color, alpha / 255f), Ui.Center);
             return rect.Right + S(6);
         }
 
