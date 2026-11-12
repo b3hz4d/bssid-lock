@@ -150,8 +150,8 @@ jobs:
             '{"Ssid":"","Favorites":[],"Target":null,"LockEnabled":true,"IntervalSeconds":10,"Names":{},"TrayHintShown":true,"Theme":"' + $theme + '","AutoUpdate":false,"LastUpdateCheckTicks":0,"NotifyChanges":true}' |
               Set-Content (Join-Path $settingsDir 'settings.json') -Encoding UTF8
             foreach ($mode in 'main', 'settings') {
-              $args = if ($mode -eq 'settings') { '--open-settings' } else { '' }
-              $p = Start-Process $exe -ArgumentList $args -PassThru
+              if ($mode -eq 'settings') { $p = Start-Process $exe -ArgumentList '--open-settings' -PassThru }
+              else { $p = Start-Process $exe -PassThru }
               Start-Sleep -Seconds 8
               Shot "$mode-$theme"
               Stop-Process -Id $p.Id -Force
